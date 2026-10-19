@@ -47,20 +47,51 @@ Born out of **PR #48 (`go-gnet-kaikegm`)** in *The $12 Server Challenge* — whe
 
 ## 🚀 Benchmark Comparison
 
-Tested on an Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (Linux amd64, Go 1.22):
+All benchmarks are 100% reproducible and published directly in this repository under the [`benchmarks/`](benchmarks/) directory. The benchmark suite tests each library with the **exact same cryptographic key, token payload, claims schema, and verification workload**.
 
-| Library | Operations / sec | Latency | Memory / op | Allocs / op |
-| :--- | :---: | :---: | :---: | :---: |
-| **`zerojwt` (Parallel 8 CPUs)** | **~5,000,000 ops/s** | **~200 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt` (Single Thread Scratch)** | **~1,560,000 ops/s** | **~638 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt` (Concurrent Pool)** | **~1,510,000 ops/s** | **~658 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt` (SignClaims)** | **~2,470,000 ops/s** | **~404 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt` (SignBuilder)** | **~2,260,000 ops/s** | **~441 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| `kataras/jwt` | ~450,000 ops/s | ~2,200 ns/op | ~896 B/op | 14 allocs/op |
-| `golang-jwt/jwt/v5` | ~380,000 ops/s | ~2,600 ns/op | ~1,440 B/op | 26 allocs/op |
-| `lestrrat-go/jwx/v2` | ~190,000 ops/s | ~5,200 ns/op | ~3,120 B/op | 48 allocs/op |
+> **Note on Zero Dependencies:** The competitor benchmarks are housed in a separate Go module (`benchmarks/go.mod`). This guarantees that your production code importing `github.com/KaikeGM/zerojwt` remains strictly **zero third-party dependencies**.
 
-> **Key takeaway:** Traditional JWT libraries allocate between 14 and 48 objects on the heap per token validation, triggering constant garbage collector cycles under high loads (10k+ req/s). `zerojwt` performs **zero heap allocations**, allowing web gateways and event loops to handle maximum connection density with flat, predictable latencies.
+### 🔬 Reproducing the Benchmarks
+
+Clone the repository and run the benchmark suite directly:
+
+```bash
+cd benchmarks
+go test -bench=. -benchmem -benchtime=1s
+```
+
+All four libraries are verified for identical claim extraction and cryptographic correctness before the benchmark runs via `TestCompetitorsCompatibility`.
+
+### 📊 Benchmark Results
+
+*Environment: Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (8 logical CPUs), Linux amd64, Go 1.27 / Go 1.22.*
+*Payload: HS256 32-byte secret, standard registered claims (`sub: "12345"`, `iat`, `exp`), plus custom claim (`user: "golden_ember_1"`).*
+
+#### 1. Token Verification (Verify & Parse Claims)
+
+| Library | Mode / Strategy | Throughput | Latency | Memory / op | Allocs / op |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **`zerojwt`** | **Parallel (Multi-Core)** | **~6,075,000 ops/s** | **213.8 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **Single-Core (Scratch)** | **~1,595,000 ops/s** | **680.0 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **Single-Core (Pool)** | **~1,658,000 ops/s** | **767.3 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| `kataras/jwt` | Parallel (Multi-Core) | ~1,373,000 ops/s | 864.3 ns/op | 1,075 B/op | 15 allocs/op |
+| `kataras/jwt` | Single-Core | ~386,000 ops/s | 3,184.0 ns/op | 1,073 B/op | 15 allocs/op |
+| `golang-jwt/jwt/v5` | Parallel (Multi-Core) | ~643,000 ops/s | 1,602.0 ns/op | 2,098 B/op | 37 allocs/op |
+| `golang-jwt/jwt/v5` | Single-Core | ~235,000 ops/s | 4,904.0 ns/op | 2,091 B/op | 37 allocs/op |
+| `lestrrat-go/jwx/v2` | Parallel (Multi-Core) | ~250,000 ops/s | 4,083.0 ns/op | 6,135 B/op | 108 allocs/op |
+| `lestrrat-go/jwx/v2` | Single-Core | ~103,000 ops/s | 11,066.0 ns/op | 6,114 B/op | 108 allocs/op |
+
+#### 2. Token Generation (Signing)
+
+| Library | Implementation | Throughput | Latency | Memory / op | Allocs / op |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **`zerojwt`** | **`SignClaims`** | **~2,950,000 ops/s** | **414.0 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **`SignBuilder`** | **~2,570,000 ops/s** | **502.2 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| `kataras/jwt` | `jwt.Sign` | ~654,000 ops/s | 1,552.0 ns/op | 1,208 B/op | 14 allocs/op |
+| `golang-jwt/jwt/v5` | `SignedString` | ~316,000 ops/s | 3,586.0 ns/op | 2,338 B/op | 36 allocs/op |
+| `lestrrat-go/jwx/v2` | `jwt.Sign` | ~153,000 ops/s | 7,618.0 ns/op | 4,933 B/op | 118 allocs/op |
+
+> **Key takeaway:** Traditional JWT libraries allocate between 14 and 108 objects on the heap per token validation, accumulating megabytes of garbage and triggering constant GC pauses under production load (10k+ req/s). `zerojwt` performs **zero heap allocations**, allowing web gateways and event loops to handle maximum connection density with flat, predictable latencies.
 
 ---
 
