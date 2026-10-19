@@ -128,7 +128,7 @@ Tested on an Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (Linux amd64, Go 1.22):
 
 ## 📦 Installation
 
-Requires Go 1.21 or higher (Go 1.22+ recommended for optimal PGO):
+Requires Go 1.20 or higher (Go 1.22+ recommended for optimal PGO):
 
 ```bash
 go get github.com/KaikeGM/zerojwt

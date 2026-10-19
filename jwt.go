@@ -113,13 +113,19 @@ type Scratch struct {
 	payloadArr [MaxPayloadSize]byte
 }
 
+func memclr(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
 // Clear zeroes out all internal working buffers in Scratch using runtime memclr.
 func (s *Scratch) Clear() {
-	clear(s.sigBuf[:])
-	clear(s.sumBuf[:])
-	clear(s.derBuf[:])
-	clear(s.hdrBuf)
-	clear(s.payloadBuf)
+	memclr(s.sigBuf[:])
+	memclr(s.sumBuf[:])
+	memclr(s.derBuf[:])
+	memclr(s.hdrBuf)
+	memclr(s.payloadBuf)
 }
 
 // Claims holds standard JWT claims on the caller's stack without heap allocations.
@@ -187,11 +193,11 @@ func (c *Claims) Reset() {
 // Clear resets all fields and explicitly zeroes all internal claim buffers with 0x00 (memclr).
 func (c *Claims) Clear() {
 	c.Reset()
-	clear(c.subBuf[:])
-	clear(c.userBuf[:])
-	clear(c.issBuf[:])
-	clear(c.audBuf[:])
-	clear(c.jtiBuf[:])
+	memclr(c.subBuf[:])
+	memclr(c.userBuf[:])
+	memclr(c.issBuf[:])
+	memclr(c.audBuf[:])
+	memclr(c.jtiBuf[:])
 }
 
 // ClaimsLarge provides expanded 256-byte inline buffers for deployments where Subject,
@@ -247,11 +253,11 @@ func (c *ClaimsLarge) Reset() {
 
 func (c *ClaimsLarge) Clear() {
 	c.Reset()
-	clear(c.subBuf[:])
-	clear(c.userBuf[:])
-	clear(c.issBuf[:])
-	clear(c.audBuf[:])
-	clear(c.jtiBuf[:])
+	memclr(c.subBuf[:])
+	memclr(c.userBuf[:])
+	memclr(c.issBuf[:])
+	memclr(c.audBuf[:])
+	memclr(c.jtiBuf[:])
 }
 
 // Verifier validates and signs JWT tokens with zero heap allocations (0 B/op, 0 allocs/op).
@@ -397,10 +403,10 @@ func NewVerifierWithOptions(secret []byte, opts Options) *Verifier {
 
 // Destroy zeroes out all cryptographic secret keys stored inside the Verifier.
 func (v *Verifier) Destroy() {
-	clear(v.secret)
-	clear(v.edPriv)
+	memclr(v.secret)
+	memclr(v.edPriv)
 	for i := range v.keys {
-		clear(v.keys[i].secret)
+		memclr(v.keys[i].secret)
 	}
 }
 
@@ -641,7 +647,7 @@ func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scra
 			edSig := ed25519.Sign(v.edPriv, signingInput)
 			copy(st.sumBuf[:64], edSig)
 		} else {
-			clear(st.sumBuf[:64])
+			memclr(st.sumBuf[:64])
 		}
 		sig = st.sumBuf[:64]
 	case AlgES256:
@@ -653,7 +659,7 @@ func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scra
 				break
 			}
 		}
-		clear(st.sumBuf[:64])
+		memclr(st.sumBuf[:64])
 		sig = st.sumBuf[:64]
 	default:
 		st.mac.Reset()
@@ -1205,7 +1211,7 @@ func decodeDERToP1363(der, dst []byte) bool {
 	if len(rBytes) > 32 || len(sBytes) > 32 {
 		return false
 	}
-	clear(dst[:64])
+	memclr(dst[:64])
 	copy(dst[32-len(rBytes):32], rBytes)
 	copy(dst[64-len(sBytes):64], sBytes)
 	return true
