@@ -1,0 +1,93 @@
+name: CI & Zero-Alloc Quality Gate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: read
+
+jobs:
+  test-matrix:
+    name: Test (${{ matrix.os }}, Go ${{ matrix.go-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        go-version: [ '1.22.x', '1.23.x' ]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Enforce Strict Zero Heap Allocations (0 B/op, 0 allocs/op)
+        run: go test -v -run=TestZeroAllocations ./...
+
+      - name: Run Full Test Suite & Race Detector
+        run: go test -v -race ./...
+
+      - name: Run Zero-Alloc Benchmarks
+        run: go test -bench=. -benchmem ./...
+
+  test-linux-arm64:
+    name: Test (Linux arm64, Go 1.23)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Run Tests in Linux ARM64 Container
+        run: |
+          docker run --rm \
+            --platform linux/arm64 \
+            -v "$PWD":/app \
+            -w /app \
+            golang:1.23 \
+            bash -c "go test -v ./... && go test -v -run=TestZeroAllocations ./..."
+
+  coverage:
+    name: Verify 100% Statement Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Run Coverage Analysis
+        run: go test -v -coverprofile=coverage.out ./...
+
+      - name: Display Coverage Breakdown
+        run: go tool cover -func=coverage.out
+
+      - name: Enforce 100.0% Coverage Threshold
+        shell: bash
+        run: |
+          TOTAL_COV=$(go tool cover -func=coverage.out | grep "total:" | awk '{print $3}')
+          echo "Total Statement Coverage: $TOTAL_COV"
+          if [ "$TOTAL_COV" != "100.0%" ]; then
+            echo "ERROR: Code coverage dropped below 100.0%! Found: $TOTAL_COV"
+            exit 1
+          fi
+          echo "SUCCESS: Code coverage is exactly 100.0% across all statements."
+
+      - name: Upload Coverage Profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.out
+          retention-days: 14

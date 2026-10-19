@@ -1,0 +1,12 @@
+# Test artifacts and coverage profiles
+*.out
+*.test
+coverage.out
+*.prof
+
+# Operating System and IDE files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
