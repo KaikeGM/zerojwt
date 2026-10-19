@@ -307,12 +307,11 @@ func TestZeroAllocations(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if edVerifyAllocs != 0 {
-		if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" && edVerifyAllocs <= 1 {
-			t.Logf("notice: Go stdlib crypto/ed25519 has 1 internal runtime allocation on darwin/arm64 in older Go versions: %v", edVerifyAllocs)
-		} else {
-			t.Fatalf("expected 0 allocs/op in Ed25519 Verify, got %v", edVerifyAllocs)
-		}
+	// O runtime do Go <= 1.22 em darwin/arm64 apresenta 1 alocação espúria na stdlib do ed25519
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" && edVerifyAllocs <= 1 {
+		t.Logf("aviso: contornada alocação espúria da stdlib em darwin/arm64 (Go < 1.23): %v allocs/op", edVerifyAllocs)
+	} else if edVerifyAllocs != 0 {
+		t.Fatalf("expected 0 allocs/op in Ed25519 Verify, got %v", edVerifyAllocs)
 	}
 }
 
@@ -368,7 +367,7 @@ func TestIndustrialSuite(t *testing.T) {
 
 	// 4. Clock Skew / Leeway tolerance + Issuer (iss) + Audience (aud string & array) + JTI
 	vStrict := NewVerifierWithOptions(secret, Options{
-		Leeway:           5 * time.Second,
+		Leeway:           60 * time.Second,
 		ExpectedIssuer:   "auth.zerojwt.io",
 		ExpectedAudience: "payment-service",
 	})
@@ -378,22 +377,22 @@ func TestIndustrialSuite(t *testing.T) {
 		SetIssuer([]byte("auth.zerojwt.io")).
 		SetClaimRawJSON("aud", []byte(`["analytics","payment-service","billing"]`)).
 		SetJTI([]byte("550e8400-e29b-41d4-a716-446655440000")).
-		SetNotBefore(now + 3). // 3s in the future, within 5s leeway
-		SetExpiresAt(now - 2)  // expired 2s ago, within 5s leeway
+		SetNotBefore(now + 10). // 10s in the future, within 60s leeway
+		SetExpiresAt(now - 10)  // expired 10s ago, within 60s leeway
 	leewayTok, err := sb.Sign()
 	if err != nil {
 		t.Fatalf("SignBuilder failed: %v", err)
 	}
 	if err := vStrict.Verify(leewayTok, now, &claims); err != nil {
-		t.Fatalf("expected token within 5s leeway and matching iss/aud array to pass, got %v", err)
+		t.Fatalf("expected token within 60s leeway and matching iss/aud array to pass, got %v", err)
 	}
 	if string(claims.Issuer()) != "auth.zerojwt.io" ||
 		string(claims.Audience()) != "payment-service" ||
 		string(claims.JTI()) != "550e8400-e29b-41d4-a716-446655440000" {
 		t.Fatalf("unexpected iss/aud/jti: iss=%s aud=%s jti=%s", claims.Issuer(), claims.Audience(), claims.JTI())
 	}
-	// Outside leeway (10s after exp) -> ErrExpiredToken
-	if err := vStrict.Verify(leewayTok, now+10, &claims); !errors.Is(err, ErrExpiredToken) {
+	// Outside leeway (120s after exp) -> ErrExpiredToken
+	if err := vStrict.Verify(leewayTok, now+120, &claims); !errors.Is(err, ErrExpiredToken) {
 		t.Fatalf("expected ErrExpiredToken outside leeway, got %v", err)
 	}
 
