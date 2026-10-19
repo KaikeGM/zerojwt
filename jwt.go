@@ -6,14 +6,17 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"fmt"
 	"hash"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,12 +45,19 @@ const (
 	encodedES256HeaderDot = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9."
 )
 
+// rawURLStrict decodes Base64URL without padding and rejects non-zero trailing
+// bits, so every valid token has exactly one accepted string form.
+// (Strict() returns a pointer to a copy, so it is built once here to keep
+// the verification path allocation-free.)
+var rawURLStrict = base64.RawURLEncoding.Strict()
+
 var (
 	dotByte      = []byte(".")
 	bearerPrefix = []byte("Bearer ")
 	algKey       = []byte("alg")
 	typKey       = []byte("typ")
 	kidKey       = []byte("kid")
+	critKey      = []byte("crit")
 	jwtVal       = []byte("JWT")
 )
 
@@ -94,7 +104,15 @@ type Options struct {
 	// ECDSAPrivateKey is the P-256 private key used for signing when Algorithm is AlgES256.
 	ECDSAPrivateKey *ecdsa.PrivateKey
 	// ZeroMemory zeroes out sensitive scratch buffers with 0x00 (memclr) after each operation.
+	// This is best-effort memory hygiene, not a compliance guarantee.
 	ZeroMemory bool
+	// RequireExp makes verification fail with ErrMissingExp when a token carries no "exp"
+	// claim, and makes SignClaims refuse to sign with exp <= 0. Default: false.
+	RequireExp bool
+	// StrictSecretLength enforces the RFC 7518 §3.2 minimum HMAC key size
+	// (32 bytes for HS256, 48 for HS384, 64 for HS512). Empty keys are always rejected,
+	// regardless of this option. Default: false.
+	StrictSecretLength bool
 }
 
 // Scratch holds reusable buffers and pre-initialized HMAC hashers.
@@ -280,6 +298,8 @@ type Verifier struct {
 	maxHeaderSize    int
 	maxPayloadSize   int
 	zeroMemory       bool
+	requireExp       bool
+	destroyed        atomic.Bool
 	pool             sync.Pool
 }
 
@@ -309,10 +329,29 @@ func NewES256Verifier(pub *ecdsa.PublicKey, priv *ecdsa.PrivateKey, opts Options
 
 // NewVerifierWithOptions creates a new concurrent-safe Verifier with custom algorithm,
 // buffer dimensions, clock skew leeway, issuer/audience rules, and key rotation.
+//
+// It panics with an error wrapping ErrInvalidConfig when the configuration is unusable
+// (empty HMAC secret, a Key without material for the selected algorithm, unknown algorithm,
+// wrong key size or curve, ...), so that misconfiguration is caught at startup instead of
+// producing a verifier that accepts forged tokens. Use TryNewVerifier to get an error instead.
 func NewVerifierWithOptions(secret []byte, opts Options) *Verifier {
+	v, err := TryNewVerifier(secret, opts)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+// TryNewVerifier is like NewVerifierWithOptions but returns an error wrapping
+// ErrInvalidConfig instead of panicking. opts.Algorithm selects the algorithm; for EdDSA and
+// ES256 the keys come from the corresponding Options fields and secret is ignored.
+func TryNewVerifier(secret []byte, opts Options) (*Verifier, error) {
 	alg := opts.Algorithm
 	if alg == "" {
 		alg = AlgHS256
+	}
+	if err := validateConfig(secret, alg, opts); err != nil {
+		return nil, err
 	}
 	hdrSize := opts.MaxHeaderSize
 	if hdrSize <= 0 {
@@ -372,6 +411,16 @@ func NewVerifierWithOptions(secret []byte, opts Options) *Verifier {
 		}
 	}
 
+	// A signer configured with only a private key can still verify its own tokens.
+	edPub := opts.Ed25519PublicKey
+	if len(edPub) == 0 && len(opts.Ed25519PrivateKey) == ed25519.PrivateKeySize {
+		edPub = opts.Ed25519PrivateKey.Public().(ed25519.PublicKey)
+	}
+	ecPub := opts.ECDSAPublicKey
+	if ecPub == nil && opts.ECDSAPrivateKey != nil {
+		ecPub = &opts.ECDSAPrivateKey.PublicKey
+	}
+
 	v := &Verifier{
 		alg:              alg,
 		algBytes:         []byte(alg),
@@ -379,15 +428,16 @@ func NewVerifierWithOptions(secret []byte, opts Options) *Verifier {
 		sigEncodedLen:    sigEncLen,
 		encodedHeaderDot: defaultHdrDot,
 		secret:           append([]byte(nil), secret...),
-		edPub:            append(ed25519.PublicKey(nil), opts.Ed25519PublicKey...),
+		edPub:            append(ed25519.PublicKey(nil), edPub...),
 		edPriv:           append(ed25519.PrivateKey(nil), opts.Ed25519PrivateKey...),
-		ecPub:            opts.ECDSAPublicKey,
+		ecPub:            ecPub,
 		ecPriv:           opts.ECDSAPrivateKey,
 		keys:             cKeys,
 		leewaySec:        int64(opts.Leeway / time.Second),
 		maxHeaderSize:    hdrSize,
 		maxPayloadSize:   plSize,
 		zeroMemory:       opts.ZeroMemory,
+		requireExp:       opts.RequireExp,
 	}
 	if opts.ExpectedIssuer != "" {
 		v.expectedIss = []byte(opts.ExpectedIssuer)
@@ -398,15 +448,125 @@ func NewVerifierWithOptions(secret []byte, opts Options) *Verifier {
 	v.pool.New = func() any {
 		return v.NewScratch()
 	}
-	return v
+	return v, nil
 }
 
-// Destroy zeroes out all cryptographic secret keys stored inside the Verifier.
+// validateConfig rejects configurations that would make verification unsafe or signing meaningless.
+func validateConfig(secret []byte, alg Algorithm, opts Options) error {
+	invalid := func(format string, a ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, a...))
+	}
+	minHS := 0
+	switch alg {
+	case AlgHS256:
+		minHS = 32
+	case AlgHS384:
+		minHS = 48
+	case AlgHS512:
+		minHS = 64
+	case AlgEdDSA, AlgES256:
+	default:
+		return invalid("unsupported algorithm %q", string(alg))
+	}
+	isHS := minHS > 0
+
+	seen := make(map[string]struct{}, len(opts.Keys))
+	for i, k := range opts.Keys {
+		if k.ID == "" {
+			return invalid("Keys[%d]: empty ID", i)
+		}
+		if _, dup := seen[k.ID]; dup {
+			return invalid("Keys[%d]: duplicate ID %q", i, k.ID)
+		}
+		seen[k.ID] = struct{}{}
+		switch {
+		case isHS:
+			if len(k.Secret) == 0 {
+				return invalid("Keys[%d] (%q): %s needs a non-empty Secret", i, k.ID, alg)
+			}
+			if opts.StrictSecretLength && len(k.Secret) < minHS {
+				return invalid("Keys[%d] (%q): %s secret must be at least %d bytes", i, k.ID, alg, minHS)
+			}
+		case alg == AlgEdDSA:
+			if len(k.Ed25519Public) != ed25519.PublicKeySize {
+				return invalid("Keys[%d] (%q): EdDSA needs a %d-byte Ed25519Public", i, k.ID, ed25519.PublicKeySize)
+			}
+		case alg == AlgES256:
+			if k.ECDSAPublic == nil || k.ECDSAPublic.Curve != elliptic.P256() {
+				return invalid("Keys[%d] (%q): ES256 needs a P-256 ECDSAPublic", i, k.ID)
+			}
+		}
+	}
+
+	switch {
+	case isHS:
+		if len(secret) == 0 {
+			if len(opts.Keys) == 0 {
+				return invalid("empty HMAC secret")
+			}
+		} else if opts.StrictSecretLength && len(secret) < minHS {
+			return invalid("%s secret must be at least %d bytes (RFC 7518 §3.2)", alg, minHS)
+		}
+	case alg == AlgEdDSA:
+		pub, priv := opts.Ed25519PublicKey, opts.Ed25519PrivateKey
+		if len(pub) == 0 {
+			if len(priv) == 0 && len(opts.Keys) == 0 {
+				return invalid("missing Ed25519 key")
+			}
+		} else if len(pub) != ed25519.PublicKeySize {
+			return invalid("Ed25519 public key must be %d bytes", ed25519.PublicKeySize)
+		}
+		if len(priv) != 0 && len(priv) != ed25519.PrivateKeySize {
+			return invalid("Ed25519 private key must be %d bytes", ed25519.PrivateKeySize)
+		}
+	case alg == AlgES256:
+		pub, priv := opts.ECDSAPublicKey, opts.ECDSAPrivateKey
+		if pub == nil {
+			if priv == nil && len(opts.Keys) == 0 {
+				return invalid("missing ECDSA key")
+			}
+		} else if pub.Curve != elliptic.P256() {
+			return invalid("ES256 requires a P-256 public key")
+		}
+		if priv != nil && priv.Curve != elliptic.P256() {
+			return invalid("ES256 requires a P-256 private key")
+		}
+	}
+	return nil
+}
+
+// Destroy makes the Verifier unusable and wipes, on a best-effort basis, the key material it owns:
+// the HMAC secret, its private copy of the Ed25519 private key and the secrets of registered Keys.
+// Afterwards Verify* returns ErrVerifierDestroyed and Sign* returns nil.
+//
+// This is memory hygiene, not a compliance guarantee. Not scrubbed: the slices you passed in,
+// HMAC state cached inside pooled Scratch values (the standard library's hmac keeps key-derived
+// pads) and an *ecdsa.PrivateKey you share with the Verifier (only the reference is dropped).
+// Destroy must not be called concurrently with other methods.
 func (v *Verifier) Destroy() {
+	v.destroyed.Store(true)
 	memclr(v.secret)
 	memclr(v.edPriv)
 	for i := range v.keys {
 		memclr(v.keys[i].secret)
+	}
+	v.ecPriv = nil
+}
+
+// CanSign reports whether this Verifier holds the key material needed to issue tokens.
+// Verify-only nodes (for example EdDSA or ES256 without a private key) return false, and
+// Sign* methods return nil on them instead of producing a token with an invalid signature.
+func (v *Verifier) CanSign() bool {
+	if v.destroyed.Load() {
+		return false
+	}
+	switch v.alg {
+	case AlgEdDSA:
+		return len(v.edPriv) == ed25519.PrivateKeySize
+	case AlgES256:
+		return v.ecPriv != nil
+	default:
+		return len(v.secret) > 0
 	}
 }
 
@@ -522,6 +682,7 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 	nbfCutoff := float64(nowUnix + v.leewaySec)
 	matchedIss := len(v.expectedIss) == 0
 	matchedAud := len(v.expectedAud) == 0
+	sawExp := false
 
 	for len(body) > 0 {
 		key, val, isStr, rest, ok := NextJSONProp(body)
@@ -542,6 +703,7 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 					v.releaseScratch(st)
 					return ErrInvalidPayload
 				}
+				sawExp = true
 				if expCutoff >= expSec {
 					v.releaseScratch(st)
 					return ErrExpiredToken
@@ -581,6 +743,10 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 		}
 	}
 
+	if v.requireExp && !sawExp {
+		v.releaseScratch(st)
+		return ErrMissingExp
+	}
 	if !matchedIss {
 		v.releaseScratch(st)
 		return ErrInvalidIssuer
@@ -616,7 +782,13 @@ func (v *Verifier) SignHS256(dst []byte, payloadJSON []byte) []byte {
 }
 
 // SignHS256WithScratch signs a raw JSON payload using a caller-supplied Scratch state.
+//
+// It returns nil, never a token with a bogus signature, when the Verifier cannot sign
+// (see CanSign) or when the signing operation fails.
 func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scratch) []byte {
+	if !v.CanSign() {
+		return nil
+	}
 	enc := base64.RawURLEncoding
 	start := len(dst)
 	pEncLen := enc.EncodedLen(len(payloadJSON))
@@ -643,23 +815,15 @@ func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scra
 	var sig []byte
 	switch v.alg {
 	case AlgEdDSA:
-		if len(v.edPriv) == ed25519.PrivateKeySize {
-			edSig := ed25519.Sign(v.edPriv, signingInput)
-			copy(st.sumBuf[:64], edSig)
-		} else {
-			memclr(st.sumBuf[:64])
-		}
+		edSig := ed25519.Sign(v.edPriv, signingInput)
+		copy(st.sumBuf[:64], edSig)
 		sig = st.sumBuf[:64]
 	case AlgES256:
-		if v.ecPriv != nil {
-			digest := sha256.Sum256(signingInput)
-			asn1Sig, err := ecdsa.SignASN1(rand.Reader, v.ecPriv, digest[:])
-			if err == nil && decodeDERToP1363(asn1Sig, st.sumBuf[:64]) {
-				sig = st.sumBuf[:64]
-				break
-			}
+		digest := sha256.Sum256(signingInput)
+		asn1Sig, err := ecdsa.SignASN1(rand.Reader, v.ecPriv, digest[:])
+		if err != nil || !decodeDERToP1363(asn1Sig, st.sumBuf[:64]) {
+			return nil
 		}
-		memclr(st.sumBuf[:64])
 		sig = st.sumBuf[:64]
 	default:
 		st.mac.Reset()
@@ -679,6 +843,9 @@ func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scra
 // SignClaims formats a standard JSON payload `{"sub":"...","username":"...","iat":...,"exp":...}`
 // into Scratch and appends the signed JWT token to dst with zero heap allocations.
 func (v *Verifier) SignClaims(dst []byte, sub, username []byte, iat, exp int64) []byte {
+	if v.requireExp && exp <= 0 {
+		return nil // would produce a token this Verifier rejects with ErrMissingExp
+	}
 	st := v.pool.Get().(*Scratch)
 	b := st.payloadBuf[:0]
 	b = append(b, `{"sub":`...)
@@ -711,6 +878,13 @@ func (v *Verifier) SignClaims(dst []byte, sub, username []byte, iat, exp int64) 
 }
 
 func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]byte, error) {
+	if v.destroyed.Load() {
+		return nil, ErrVerifierDestroyed
+	}
+	// Go's base64 decoder silently skips CR/LF; reject them so a token has a single accepted form.
+	if bytes.IndexByte(tok, '\n') >= 0 || bytes.IndexByte(tok, '\r') >= 0 {
+		return nil, ErrInvalidToken
+	}
 	// 1. Split header.payload.signature using bytes.Cut (0 allocations)
 	hBytes, rest, hasDot1 := bytes.Cut(tok, dotByte)
 	if !hasDot1 || len(hBytes) == 0 {
@@ -721,7 +895,7 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 		return nil, ErrInvalidToken
 	}
 
-	enc := base64.RawURLEncoding
+	enc := rawURLStrict
 
 	// 2. Decode header into scratch buffer and verify "alg", optional "typ", and optional "kid"
 	if enc.DecodedLen(len(hBytes)) > len(st.hdrBuf) {
@@ -775,7 +949,12 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 	default:
 		mac := st.mac
 		if keyIdx >= 0 {
+			if len(v.keys[keyIdx].secret) == 0 {
+				return nil, ErrInvalidSignature
+			}
 			mac = st.keyMacs[keyIdx]
+		} else if len(v.secret) == 0 {
+			return nil, ErrInvalidSignature
 		}
 		mac.Reset()
 		_, _ = mac.Write(tok[:signingInputLen])
@@ -819,6 +998,9 @@ func (v *Verifier) validateHeader(h []byte) (int, error) {
 			if !isStr || !bytes.EqualFold(val, jwtVal) {
 				return -1, ErrInvalidHeader
 			}
+		} else if bytes.Equal(key, critKey) {
+			// RFC 7515 §4.1.11: unknown critical extensions MUST be rejected; none are supported.
+			return -1, ErrInvalidHeader
 		} else if bytes.Equal(key, kidKey) {
 			if !isStr || len(val) == 0 {
 				return -1, ErrInvalidHeader
@@ -962,6 +1144,9 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 	if len(v.expectedAud) > 0 && !out.HasAud {
 		return ErrInvalidAudience
 	}
+	if v.requireExp && !out.HasExp {
+		return ErrMissingExp
+	}
 	if !out.HasSub {
 		return ErrInvalidPayload
 	}
@@ -1082,6 +1267,9 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 	}
 	if len(v.expectedAud) > 0 && !out.HasAud {
 		return ErrInvalidAudience
+	}
+	if v.requireExp && !out.HasExp {
+		return ErrMissingExp
 	}
 	if !out.HasSub {
 		return ErrInvalidPayload

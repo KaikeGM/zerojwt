@@ -37,4 +37,17 @@ var (
 
 	// ErrUnknownKeyID is returned when the header specifies a "kid" that is not registered in the Verifier.
 	ErrUnknownKeyID = errors.New("zerojwt: unknown key ID (kid) in header")
+
+	// ErrMissingExp is returned when Options.RequireExp is set and the token has no "exp" claim.
+	ErrMissingExp = errors.New("zerojwt: token has no exp claim")
+
+	// ErrInvalidConfig is wrapped by the errors TryNewVerifier returns (and the panics of the
+	// New* constructors) for unusable configurations such as an empty HMAC secret.
+	ErrInvalidConfig = errors.New("zerojwt: invalid configuration")
+
+	// ErrNoSigningKey is returned by SignBuilder.Sign when the Verifier cannot sign (see Verifier.CanSign).
+	ErrNoSigningKey = errors.New("zerojwt: verifier has no signing key")
+
+	// ErrVerifierDestroyed is returned by Verify* after Verifier.Destroy has been called.
+	ErrVerifierDestroyed = errors.New("zerojwt: verifier has been destroyed")
 )

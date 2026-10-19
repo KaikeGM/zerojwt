@@ -36,7 +36,7 @@ Born out of **PR #48 (`go-gnet-kaikegm`)** in *The $12 Server Challenge* — whe
   - [ProtectFunc (0 allocs/op)](#1-protectfunc-fastest-zero-allocation)
   - [Standard net/http & Chi Middleware](#2-standard-nethttp--chi-middleware)
   - [Gin, Fiber & gnet Integration](#3-gin-fiber--gnet-integration)
-- [Security & Compliance (FIPS / PCI-DSS)](#-security--compliance-fips--pci-dss)
+- [Security Hardening & Memory Hygiene](#-security-hardening--memory-hygiene)
 - [Profile-Guided Optimization (PGO)](#-profile-guided-optimization-pgo)
 - [API Reference](#-api-reference)
 - [Sentinel Errors](#-sentinel-errors)
@@ -67,7 +67,7 @@ Tested on an Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (Linux amd64, Go 1.22):
 ## ✨ Key Features
 
 1. **Strict 0 Allocations Guarantee:**
-   - Both token signing and token verification operate completely without heap allocations (`0 B/op, 0 allocs/op`).
+   - Token signing and verification with HS256/HS384/HS512 and EdDSA operate without heap allocations (`0 B/op, 0 allocs/op`). ES256 still allocates inside `crypto/ecdsa` (measured: ~8 allocs/op verify, ~33 allocs/op sign on Go 1.22).
    - No `interface{}` unboxing, no `map[string]any` parsing, no reflection (`reflect`).
 
 2. **Complete Cryptographic Algorithm Portfolio:**
@@ -91,9 +91,9 @@ Tested on an Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (Linux amd64, Go 1.22):
 6. **Stack-Allocated Fluent `SignBuilder`:**
    - Construct and sign custom payloads with arbitrary fields without allocating JSON strings or maps.
 
-7. **FIPS / PCI-DSS Memory Sanitization:**
-   - Optional `ZeroMemory` mode actively wipes cryptographic secrets and claims from scratch buffers via `memclr` before returning them to the pool.
-   - `Verifier.Destroy()` safely zeroes internal master keys and HMAC state.
+7. **Fail-Fast Configuration & Best-Effort Memory Hygiene:**
+   - Constructors reject unusable key material (empty HMAC secrets, keys without material for the selected algorithm, wrong key sizes or curves) instead of building a verifier that accepts forged tokens.
+   - Optional `ZeroMemory` mode wipes claims and scratch buffers via `memclr` before returning them to the pool. This is memory hygiene, not a compliance claim.
 
 8. **Zero Third-Party Dependencies:**
    - Built exclusively with the Go standard library (`crypto/*`, `encoding/base64`, `sync`, `unsafe`).
@@ -233,7 +233,7 @@ if err := gatewayVerifier.Verify(token, now, &claims); err != nil {
 
 ### 3. Asymmetric: ES256 (ECDSA P-256 / RFC 7518)
 
-ES256 is widely used in enterprise OAuth 2.0 / OpenID Connect, mobile clients, and WebAuthn. `zerojwt` implements direct IEEE P1363 ($r \parallel s$) to ASN.1 DER conversion with zero heap allocations.
+ES256 is widely used in enterprise OAuth 2.0 / OpenID Connect, mobile clients, and WebAuthn. `zerojwt` implements direct IEEE P1363 ($r \parallel s$) to ASN.1 DER conversion on stack buffers. Note that `crypto/ecdsa` itself allocates, so ES256 is not zero-allocation end to end.
 
 ```go
 import (
@@ -393,11 +393,11 @@ verifier := zerojwt.NewVerifierWithOptions(primarySecret, zerojwt.Options{
 	Keys: []zerojwt.Key{
 		{ID: "key-2025-v1", Secret: oldSecret},
 		{ID: "key-2026-v2", Secret: primarySecret},
-		{ID: "key-ed-v1", Ed25519Public: edPubKey},
-		{ID: "key-es-v1", ECDSAPublic: ecPubKey},
 	},
 })
 ```
+
+Every key must carry material for the verifier's algorithm: `Secret` for HS256/384/512, a 32-byte `Ed25519Public` for EdDSA, a P-256 `ECDSAPublic` for ES256. IDs must be non-empty and unique. A key that does not match the algorithm is a configuration error (see [Security Hardening](#-security-hardening--memory-hygiene)); a verifier handles one algorithm, so keys of different algorithms cannot be mixed in one `Verifier`.
 
 When validating, `zerojwt` extracts the `"kid"` claim from the header and uses the corresponding cryptographic key in $O(1)$ without heap allocations.
 
@@ -419,6 +419,8 @@ http.HandleFunc("/api/me", verifier.ProtectFunc(func(w http.ResponseWriter, r *h
 ---
 
 ### 2. Standard `net/http` & Chi Middleware
+
+> `Middleware` stores the claims in the request `context`, which allocates. Use `ProtectFunc` when you need zero allocations per request.
 
 Integrates seamlessly with Chi, Gorilla Mux, or standard Go routers:
 
@@ -483,13 +485,36 @@ func (s *server) OnTraffic(c gnet.Conn) gnet.Action {
 
 ---
 
-## 🛡️ Security & Compliance (FIPS / PCI-DSS)
+## 🛡️ Security Hardening & Memory Hygiene
 
-### Memory Sanitization (`ZeroMemory`)
+### Fail-Fast Configuration
 
-In multi-tenant or regulated financial environments (PCI-DSS, HIPAA, FIPS), residual keys and user attributes must not linger in memory buffers.
+`NewVerifier`, `NewVerifierWithOptions`, `NewEd25519Verifier` and `NewES256Verifier` **panic** with an error wrapping `zerojwt.ErrInvalidConfig` when the configuration is unusable, so a missing `JWT_SECRET` crashes at startup instead of silently accepting forged tokens. To handle the error yourself, use `TryNewVerifier`:
 
-Enable `ZeroMemory: true` to invoke Go's runtime `memclr` over all scratch buffers and claims before releasing them back to the pool:
+```go
+v, err := zerojwt.TryNewVerifier([]byte(os.Getenv("JWT_SECRET")), zerojwt.Options{
+	Algorithm:          zerojwt.AlgHS256,
+	RequireExp:         true, // reject tokens without "exp"; SignClaims/SignBuilder refuse to omit it
+	StrictSecretLength: true, // enforce the RFC 7518 §3.2 minimum: 32/48/64 bytes for HS256/384/512
+})
+if err != nil {
+	log.Fatal(err) // errors.Is(err, zerojwt.ErrInvalidConfig)
+}
+```
+
+Always rejected: empty HMAC secrets, `Key`s without material for the selected algorithm, empty or duplicate key IDs, unknown algorithm names, wrong Ed25519 key sizes and non-P-256 ECDSA keys. `StrictSecretLength` is opt-in so existing deployments with shorter (but non-empty) secrets keep working.
+
+### Strict Token Form and Headers
+
+A token has exactly one accepted string form: Base64URL is decoded in strict mode (non-canonical trailing bits are rejected) and any `\r` or `\n` in the token is rejected. This matters if you key a revocation list or replay cache on the token string. A `crit` header is rejected, as RFC 7515 §4.1.11 requires for unsupported critical extensions.
+
+### Verify-Only Nodes
+
+`Verifier.CanSign()` reports whether the verifier holds a signing key. On verify-only nodes (for example EdDSA/ES256 without a private key) the `Sign*` methods return `nil` and `SignBuilder.Sign` returns `ErrNoSigningKey`; they never return a token with an invalid signature.
+
+### Memory Hygiene (`ZeroMemory`, `Destroy`)
+
+Enable `ZeroMemory: true` to `memclr` claims and scratch buffers before they go back to the pool:
 
 ```go
 verifier := zerojwt.NewVerifierWithOptions(secret, zerojwt.Options{
@@ -497,11 +522,8 @@ verifier := zerojwt.NewVerifierWithOptions(secret, zerojwt.Options{
 })
 ```
 
-To securely decommission a verifier and scrub master keys from RAM upon service shutdown:
-
-```go
-defer verifier.Destroy()
-```
+`verifier.Destroy()` wipes the secrets the verifier owns and makes it unusable (`Verify*` returns `ErrVerifierDestroyed`, `Sign*` returns `nil`). This is best-effort hygiene, **not** a FIPS / PCI-DSS compliance claim: copies of keys you passed in, HMAC state cached inside pooled Scratch values (the standard library's hmac keeps key-derived pads) and an `*ecdsa.PrivateKey` you share with the Verifier (only the reference is dropped).
+Destroy must not be called concurrently with other methods.
 
 ---
 
@@ -530,7 +552,9 @@ go build -gcflags="-m=2" 2>&1 | grep "pgo inline"
 - `NewVerifier(secret []byte) *Verifier`: Creates an HS256 verifier with default buffer limits (128B header, 1024B payload).
 - `NewEd25519Verifier(pub ed25519.PublicKey, priv ed25519.PrivateKey, opts Options) *Verifier`: Creates an EdDSA (Ed25519) verifier.
 - `NewES256Verifier(pub *ecdsa.PublicKey, priv *ecdsa.PrivateKey, opts Options) *Verifier`: Creates an ES256 (ECDSA P-256) verifier.
-- `NewVerifierWithOptions(secret []byte, opts Options) *Verifier`: Creates a fully configured verifier.
+- `NewVerifierWithOptions(secret []byte, opts Options) *Verifier`: Creates a fully configured verifier. Panics (wrapping `ErrInvalidConfig`) on unusable configuration.
+- `TryNewVerifier(secret []byte, opts Options) (*Verifier, error)`: Same, but returns the error instead of panicking.
+- `(*Verifier).CanSign() bool`: Reports whether the verifier holds a signing key.
 
 ### Verification Methods
 - `Verify(tok []byte, nowUnix int64, out *Claims) error`: Validates token into standard `Claims`.
@@ -541,6 +565,8 @@ go build -gcflags="-m=2" 2>&1 | grep "pgo inline"
 - `VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val []byte, isStr bool) bool) error`: Validates signature and temporal claims, scanning arbitrary claims with zero allocations.
 
 ### Signing Methods
+All `Sign*` methods return `nil` (never a token with a bogus signature) when the verifier cannot sign (`CanSign() == false`), when the signing operation fails, or, with `RequireExp`, when `SignClaims` is called with `exp <= 0`.
+
 - `Sign(dst []byte, payloadJSON []byte) []byte`: Signs raw JSON payload using default buffers.
 - `SignClaims(dst, sub, username []byte, iat, exp int64) []byte`: Signs standard claims directly into `dst`.
 - `SignWithScratch(dst, payloadJSON []byte, st *Scratch) []byte`: Signs payload using caller-supplied `Scratch`.
@@ -553,7 +579,7 @@ go build -gcflags="-m=2" 2>&1 | grep "pgo inline"
 - `TrimJSONObject(b []byte) ([]byte, bool)`: Strips whitespace and outer `{` and `}` braces.
 - `TrimJSONArray(b []byte) ([]byte, bool)`: Strips whitespace and outer `[` and `]` brackets.
 - `ParseNumeric(b []byte) (float64, bool)`: Parses integer, decimal, and scientific notation floats in zero allocations.
-- `ParsePositiveInt(b []byte) (uint64, bool)`: Ultra-fast integer parser.
+- `ParsePositiveInt(b []byte) (int64, bool)`: Ultra-fast integer parser.
 - `UnescapeJSONInPlace(s []byte) []byte`: Decodes escape sequences and Unicode code points in-place.
 - `AppendEscapedJSONString(dst, s []byte) []byte`: Appends a JSON-safe quoted string.
 
@@ -576,6 +602,10 @@ All errors are pre-allocated static sentinels. Compare using `errors.Is` or `==`
 | `ErrInvalidIssuer` | The `iss` claim does not match `ExpectedIssuer`. |
 | `ErrInvalidAudience` | The `aud` claim does not match or contain `ExpectedAudience`. |
 | `ErrUnknownKeyID` | The `"kid"` header specifies an unrecognized key ID. |
+| `ErrMissingExp` | `RequireExp` is set and the token has no `exp` claim. |
+| `ErrInvalidConfig` | Wrapped by `TryNewVerifier` errors and constructor panics for unusable configuration. |
+| `ErrNoSigningKey` | `SignBuilder.Sign` was called on a verifier that cannot sign. |
+| `ErrVerifierDestroyed` | A `Verify*` method was called after `Destroy()`. |
 
 ---
 

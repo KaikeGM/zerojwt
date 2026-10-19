@@ -10,6 +10,7 @@ type SignBuilder struct {
 	dst    []byte
 	buf    []byte
 	hasAny bool
+	hasExp bool
 	owned  bool
 }
 
@@ -83,6 +84,7 @@ func (b *SignBuilder) SetIssuedAt(iat int64) *SignBuilder {
 
 // SetExpiresAt appends the standard "exp" claim (Unix seconds).
 func (b *SignBuilder) SetExpiresAt(exp int64) *SignBuilder {
+	b.hasExp = true
 	return b.SetClaimInt("exp", exp)
 }
 
@@ -124,6 +126,8 @@ func (b *SignBuilder) SetClaimBool(key string, val bool) *SignBuilder {
 }
 
 // SetClaimRawJSON appends a pre-formatted JSON value (such as an array `["admin","editor"]` or object).
+// The value is copied verbatim and NOT validated or escaped: never pass untrusted input,
+// or the resulting payload may be malformed or contain injected claims.
 func (b *SignBuilder) SetClaimRawJSON(key string, rawJSON []byte) *SignBuilder {
 	b.appendKey(key)
 	b.buf = append(b.buf, rawJSON...)
@@ -143,11 +147,21 @@ func (b *SignBuilder) Sign() ([]byte, error) {
 		}
 		return nil, ErrPayloadTooLarge
 	}
+	if b.v.requireExp && !b.hasExp {
+		if b.owned {
+			b.v.releaseScratch(b.st)
+			b.st = nil
+		}
+		return nil, ErrMissingExp
+	}
 	b.buf = append(b.buf, '}')
 	tok := b.v.SignHS256WithScratch(b.dst, b.buf, b.st)
 	if b.owned {
 		b.v.releaseScratch(b.st)
 		b.st = nil
+	}
+	if tok == nil {
+		return nil, ErrNoSigningKey
 	}
 	return tok, nil
 }

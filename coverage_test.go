@@ -488,15 +488,15 @@ func TestComprehensiveCoverage(t *testing.T) {
 		ecPrivTmp, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		vESPubOnly := NewES256Verifier(&ecPrivTmp.PublicKey, nil, Options{})
 		tokESNoPriv := vESPubOnly.Sign(nil, []byte(`{"sub":"123"}`))
-		if len(tokESNoPriv) == 0 {
-			t.Fatal("expected token output even with nil ecPriv")
+		if tokESNoPriv != nil || vESPubOnly.CanSign() {
+			t.Fatal("verify-only ES256 verifier must refuse to sign (nil token, CanSign=false)")
 		}
 
 		edPubTmp, _, _ := ed25519.GenerateKey(rand.Reader)
 		vEdPubOnly := NewEd25519Verifier(edPubTmp, nil, Options{})
 		tokEdNoPriv := vEdPubOnly.Sign(nil, []byte(`{"sub":"123"}`))
-		if len(tokEdNoPriv) == 0 {
-			t.Fatal("expected token output even with nil edPriv")
+		if tokEdNoPriv != nil || vEdPubOnly.CanSign() {
+			t.Fatal("verify-only EdDSA verifier must refuse to sign (nil token, CanSign=false)")
 		}
 
 		// 8.4 Header validation edge cases
@@ -571,10 +571,9 @@ func TestComprehensiveCoverage(t *testing.T) {
 			t.Fatalf("expected EdDSA key rotation verify to succeed, got %v", err)
 		}
 
-		// ES256 verification with nil pub key
-		vESNilPub := NewES256Verifier(nil, nil, Options{})
-		if err := vESNilPub.Verify(tokESRot, now, &clES); !errors.Is(err, ErrInvalidSignature) {
-			t.Fatalf("expected ErrInvalidSignature when pub == nil, got %v", err)
+		// ES256 verifier without any key is a configuration error, not a verifier that fails every token
+		if _, err := TryNewVerifier(nil, Options{Algorithm: AlgES256}); !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("expected ErrInvalidConfig when no ES256 key is configured, got %v", err)
 		}
 
 		// ES256 verification when encodeP1363ToDER returns false (all-zero signature)
