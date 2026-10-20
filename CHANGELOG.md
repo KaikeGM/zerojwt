@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.2.2] - 2026-10-20
 
 ### Fixed
+- **Deterministic ES256 DER Test Coverage:** Added fixed edge-vector test suite (`es256_der_test.go`) covering all high-bit and leading-zero DER/P1363 branches, eliminating coverage gate flakiness and ensuring a 100.0% pass rate.
 - **CI Windows Runner Shell Execution:** Resolved syntax failures on `windows-latest` by configuring `defaults: run: shell: bash` across matrix jobs and moving the `gofmt` verification script to the Ubuntu quality gate.
 - **`go.mod` Retract Notice:** Translated retraction comments to English (`Accepted forged tokens (empty HMAC key); fixed in v1.1.0`) for global toolchain visibility.
 - **Documentation Phrasing:** Clarified version requirements to "Go 1.23 or newer" in `README.md` and "Go 1.23 ou superior" in `README_pt-BR.md`.
@@ -83,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Enforce `exp` Requirement (`RequireExp`):** Added `RequireExp` option to reject tokens without an `exp` claim, and enforce that `SignClaims`/`SignBuilder` refuse to omit expiration.
 - **RFC 7518 Minimum Secret Length (`StrictSecretLength`):** Added `StrictSecretLength` option to enforce 32/48/64 byte minimum key lengths for HS256/384/512.
 - **Signing Capability Inspection (`CanSign`):** Added `(*Verifier).CanSign() bool` reporting whether the verifier holds a private signing key. On verify-only nodes, `Sign*` returns `nil` and `SignBuilder.Sign` returns `ErrNoSigningKey`.
-- **Fail-Closed Memory Hygiene (`Destroy`):** Added `(*Verifier).Destroy()` to wipe internal secrets and permanently transition the verifier into a fail-closed state (`ErrVerifierDestroyed`).
+- **Fail-Closed Memory Hygiene (`Destroy`):** Changed `(*Verifier).Destroy()` to permanently transition the verifier into a fail-closed state (`ErrVerifierDestroyed`) in addition to wiping internal secrets.
 - **Strict Base64URL and Whitespace Validation:** Non-canonical trailing bits and whitespace (`\r`, `\n`) in token strings are strictly rejected.
 - **Header `crit` Rejection:** Tokens specifying unsupported `crit` headers are rejected in accordance with RFC 7515 §4.1.11.
 
