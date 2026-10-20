@@ -28,6 +28,15 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
+      - name: Verify Code Formatting (gofmt)
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "The following files are not formatted with gofmt:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
       - name: Enforce Strict Zero Heap Allocations (0 B/op, 0 allocs/op)
         run: go test -v -run=TestZeroAllocations ./...
 

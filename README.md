@@ -161,7 +161,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 ## 📦 Installation
 
-Requires Go 1.23 or higher:
+Requires Go 1.23 to 1.27+:
 
 ```bash
 go get github.com/KaikeGM/zerojwt
@@ -428,6 +428,8 @@ for prop := range zerojwt.ObjectProperties(rawObject) {
 	fmt.Printf("Key: %s, Val: %s, IsString: %v\n", prop.Key, prop.Val, prop.IsStr)
 }
 ```
+
+> **String values note:** String elements and property values are yielded as non-destructive slices into the underlying buffer with enclosing quotes stripped, retaining escape sequences (e.g., `\"`, `\n`) to preserve buffer immutability across multiple passes. Call `zerojwt.UnescapeJSONInPlace(val)` if decoded strings are needed.
 
 #### Strict Error Detection
 

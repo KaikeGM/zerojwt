@@ -691,7 +691,7 @@ func TestComprehensiveCoverage(t *testing.T) {
 		}
 		// iss too long (>64 bytes)
 		long65 := string(make([]byte, 65))
-		tokIssLong := v.Sign(nil, []byte(`{"sub":"u","iss":"` + long65 + `"}`))
+		tokIssLong := v.Sign(nil, []byte(`{"sub":"u","iss":"`+long65+`"}`))
 		if err := v.Verify(tokIssLong, now, &Claims{}); !errors.Is(err, ErrInvalidPayload) {
 			t.Fatalf("expected ErrInvalidPayload for iss over 64 bytes, got %v", err)
 		}
@@ -707,7 +707,7 @@ func TestComprehensiveCoverage(t *testing.T) {
 			t.Fatalf("expected ErrInvalidPayload for aud numeric, got %v", err)
 		}
 		// aud > 64 bytes
-		tokAudLong := vNoAud.Sign(nil, []byte(`{"sub":"u","aud":"` + long65 + `"}`))
+		tokAudLong := vNoAud.Sign(nil, []byte(`{"sub":"u","aud":"`+long65+`"}`))
 		if err := vNoAud.Verify(tokAudLong, now, &Claims{}); !errors.Is(err, ErrInvalidPayload) {
 			t.Fatalf("expected ErrInvalidPayload for aud > 64 bytes, got %v", err)
 		}

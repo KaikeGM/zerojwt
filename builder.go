@@ -137,8 +137,9 @@ func (b *SignBuilder) SetClaimRawJSON(key string, rawJSON []byte) *SignBuilder {
 // Discard releases the internal Scratch buffer back to the pool if owned,
 // invalidating the builder. It is safe to call Discard multiple times or after Sign.
 // Typical usage:
-//   b := v.NewSigner(dst)
-//   defer b.Discard()
+//
+//	b := v.NewSigner(dst)
+//	defer b.Discard()
 func (b *SignBuilder) Discard() {
 	if b.owned && b.st != nil {
 		b.v.releaseScratch(b.st)
@@ -166,4 +167,3 @@ func (b *SignBuilder) Sign() ([]byte, error) {
 	}
 	return tok, nil
 }
-

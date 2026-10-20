@@ -162,7 +162,7 @@ O `zerojwt` atinge zero alocações na heap substituindo alocações dinâmicas 
 
 ## 📦 Instalação
 
-Requer Go 1.23 ou superior:
+Requer Go 1.23 a 1.27+:
 
 ```bash
 go get github.com/KaikeGM/zerojwt
@@ -429,6 +429,8 @@ for prop := range zerojwt.ObjectProperties(rawObject) {
 	fmt.Printf("Chave: %s, Valor: %s, IsString: %v\n", prop.Key, prop.Val, prop.IsStr)
 }
 ```
+
+> **Nota sobre valores string:** Elementos e propriedades de string são retornados como fatias não destrutivas sobre o buffer subjacente (sem as aspas externas), preservando quaisquer sequências de escape (ex.: `\"`, `\n`, `\uXXXX`) para garantir que o buffer permaneça imutável em múltiplas passadas. Se o conteúdo decodificado for necessário, chame `zerojwt.UnescapeJSONInPlace(val)`.
 
 #### Detecção Estrita de Erros
 

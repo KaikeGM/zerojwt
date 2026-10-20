@@ -1,9 +1,14 @@
+//go:build go1.23
+
 package zerojwt
 
 import "iter"
 
 // ArrayElements returns an iter.Seq2[[]byte, bool] (element, isString) that traverses
 // a raw JSON array (e.g., `["admin", "user"]`) in-place with guaranteed 0 B/op and 0 allocs/op.
+// String elements are yielded as slices into the underlying buffer (without outer quotes);
+// they remain in their raw escaped form to preserve buffer immutability across multiple passes.
+// Call UnescapeJSONInPlace(elem) if unescaped content is needed.
 // An optional errOut pointer can be passed to capture any JSON syntax error or truncation;
 // if omitted or if nil, iteration terminates without assigning an error.
 func ArrayElements(rawArray []byte, errOut ...*error) iter.Seq2[[]byte, bool] {
@@ -31,16 +36,11 @@ func ArrayElements(rawArray []byte, errOut ...*error) iter.Seq2[[]byte, bool] {
 	}
 }
 
-// JSONProp represents a key-value property scanned in-place from a JSON object.
-type JSONProp struct {
-	Key   []byte
-	Val   []byte
-	IsStr bool
-}
-
 // ObjectProps returns an iter.Seq2[[]byte, []byte] (key, val) that traverses
 // a raw JSON object (e.g., `{"role": "admin", "tenant": "acme"}`) in-place
 // with guaranteed 0 B/op and 0 allocs/op.
+// Values remain in their raw escaped form to preserve buffer immutability across multiple passes.
+// Call UnescapeJSONInPlace(val) if unescaped content is needed.
 // An optional errOut pointer can be passed to capture any JSON syntax error or truncation.
 func ObjectProps(rawObject []byte, errOut ...*error) iter.Seq2[[]byte, []byte] {
 	return func(yield func(key, val []byte) bool) {

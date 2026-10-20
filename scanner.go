@@ -37,9 +37,18 @@ func init() {
 	numEndLut[']'] = true
 }
 
+// JSONProp represents a key-value property scanned in-place from a JSON object.
+type JSONProp struct {
+	Key   []byte
+	Val   []byte
+	IsStr bool
+}
+
 // NextJSONProp extracts the next top-level "key": value pair from a JSON object body (inside '{' and '}').
 // It operates strictly in-place on b with zero heap allocations (0 B/op, 0 allocs/op).
-// If a string value contains escape sequences (e.g., \" or \u00e7), it unescapes the slice in-place.
+// String values have their enclosing quotes stripped and are returned as non-destructive slices
+// into b, preserving any escape sequences (e.g. \" or \u00e7) so that b is not modified and
+// can be traversed multiple times. Use UnescapeJSONInPlace(val) if unescaped content is needed.
 func NextJSONProp(b []byte) (key, val []byte, isStr bool, rest []byte, ok bool) {
 	i := 0
 	n := len(b)
@@ -98,6 +107,9 @@ func NextJSONProp(b []byte) (key, val []byte, isStr bool, rest []byte, ok bool) 
 
 // NextArrayElement extracts the next element from a JSON array body (inside '[' and ']').
 // It operates strictly in-place on b with zero heap allocations (0 B/op, 0 allocs/op).
+// String elements have their enclosing quotes stripped and are returned as non-destructive slices
+// into b, preserving any escape sequences so that b is not modified and can be traversed multiple
+// times safely. Use UnescapeJSONInPlace(val) if unescaped content is needed.
 func NextArrayElement(b []byte) (val []byte, isStr bool, rest []byte, ok bool) {
 	i := 0
 	n := len(b)
