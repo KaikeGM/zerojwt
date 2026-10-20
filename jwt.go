@@ -161,6 +161,7 @@ type Claims struct {
 	HasJti      bool      // True if "jti" claim was present
 	HasExp      bool      // True if "exp" claim was present
 	HasNbf      bool      // True if "nbf" claim was present
+	HasIat      bool      // True if "iat" claim was present
 	subLen      uint8     // Length of Subject in subBuf
 	userLen     uint8     // Length of Username in userBuf
 	issLen      uint8     // Length of Issuer in issBuf
@@ -201,6 +202,7 @@ func (c *Claims) Reset() {
 	c.HasJti = false
 	c.HasExp = false
 	c.HasNbf = false
+	c.HasIat = false
 	c.subLen = 0
 	c.userLen = 0
 	c.issLen = 0
@@ -232,6 +234,7 @@ type ClaimsLarge struct {
 	HasJti      bool
 	HasExp      bool
 	HasNbf      bool
+	HasIat      bool
 	subLen      uint16
 	userLen     uint16
 	issLen      uint16
@@ -262,6 +265,7 @@ func (c *ClaimsLarge) Reset() {
 	c.HasJti = false
 	c.HasExp = false
 	c.HasNbf = false
+	c.HasIat = false
 	c.subLen = 0
 	c.userLen = 0
 	c.issLen = 0
@@ -532,6 +536,9 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 			return invalid("ES256 requires a P-256 private key")
 		}
 	}
+	if opts.Leeway > 0 && opts.Leeway < time.Second {
+		return invalid("Leeway must be at least 1s (got %v)", opts.Leeway)
+	}
 	return nil
 }
 
@@ -683,6 +690,7 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 	matchedIss := len(v.expectedIss) == 0
 	matchedAud := len(v.expectedAud) == 0
 	sawExp := false
+	sawNbf := false
 
 	for len(body) > 0 {
 		key, val, isStr, rest, ok := NextJSONProp(body)
@@ -694,7 +702,7 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 
 		if len(key) == 3 {
 			if key[0] == 'e' && key[1] == 'x' && key[2] == 'p' {
-				if isStr {
+				if sawExp || isStr {
 					v.releaseScratch(st)
 					return ErrInvalidPayload
 				}
@@ -709,7 +717,7 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 					return ErrExpiredToken
 				}
 			} else if key[0] == 'n' && key[1] == 'b' && key[2] == 'f' {
-				if isStr {
+				if sawNbf || isStr {
 					v.releaseScratch(st)
 					return ErrInvalidPayload
 				}
@@ -718,11 +726,15 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 					v.releaseScratch(st)
 					return ErrInvalidPayload
 				}
+				sawNbf = true
 				if nbfCutoff < nbfSec {
 					v.releaseScratch(st)
 					return ErrNotValidYet
 				}
 			} else if key[0] == 'i' && key[1] == 's' && key[2] == 's' && len(v.expectedIss) > 0 {
+				if bytes.IndexByte(val, '\\') >= 0 {
+					val = UnescapeJSONInPlace(val)
+				}
 				if !isStr || !bytes.Equal(val, v.expectedIss) {
 					v.releaseScratch(st)
 					return ErrInvalidIssuer
@@ -982,6 +994,8 @@ func (v *Verifier) validateHeader(h []byte) (int, error) {
 		return -1, ErrInvalidHeader
 	}
 	hasAlg := false
+	hasTyp := false
+	hasKid := false
 	keyIdx := -1
 	for len(body) > 0 {
 		key, val, isStr, rest, ok := NextJSONProp(body)
@@ -990,20 +1004,25 @@ func (v *Verifier) validateHeader(h []byte) (int, error) {
 		}
 		body = bytes.TrimSpace(rest)
 		if bytes.Equal(key, algKey) {
-			if !isStr || !bytes.Equal(val, v.algBytes) {
+			if hasAlg || !isStr || !bytes.Equal(val, v.algBytes) {
 				return -1, ErrInvalidHeader
 			}
 			hasAlg = true
 		} else if bytes.Equal(key, typKey) {
-			if !isStr || !bytes.EqualFold(val, jwtVal) {
+			if hasTyp || !isStr || !bytes.EqualFold(val, jwtVal) {
 				return -1, ErrInvalidHeader
 			}
+			hasTyp = true
 		} else if bytes.Equal(key, critKey) {
 			// RFC 7515 §4.1.11: unknown critical extensions MUST be rejected; none are supported.
 			return -1, ErrInvalidHeader
 		} else if bytes.Equal(key, kidKey) {
-			if !isStr || len(val) == 0 {
+			if hasKid || !isStr || len(val) == 0 {
 				return -1, ErrInvalidHeader
+			}
+			hasKid = true
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
 			}
 			if len(v.keys) > 0 {
 				found := -1
@@ -1050,7 +1069,7 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 
 		switch string(key) {
 		case "exp":
-			if isStr {
+			if out.HasExp || isStr {
 				return ErrInvalidPayload
 			}
 			expSec, ok := ParseNumeric(val)
@@ -1063,7 +1082,7 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 				return ErrExpiredToken
 			}
 		case "nbf":
-			if isStr {
+			if out.HasNbf || isStr {
 				return ErrInvalidPayload
 			}
 			nbfSec, ok := ParseNumeric(val)
@@ -1076,7 +1095,7 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 				return ErrNotValidYet
 			}
 		case "iat":
-			if isStr {
+			if out.HasIat || isStr {
 				return ErrInvalidPayload
 			}
 			iatSec, ok := ParseNumeric(val)
@@ -1084,8 +1103,15 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 				return ErrInvalidPayload
 			}
 			out.IssuedAt = int64(iatSec)
+			out.HasIat = true
 		case "sub":
-			if !isStr || len(val) == 0 || len(val) > len(out.subBuf) {
+			if out.HasSub || !isStr || len(val) == 0 {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) == 0 || len(val) > len(out.subBuf) {
 				return ErrInvalidPayload
 			}
 			copy(out.subBuf[:], val)
@@ -1095,14 +1121,26 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 				out.SubjectID = id
 			}
 		case "username":
-			if !isStr || len(val) > len(out.userBuf) {
+			if out.HasUsername || !isStr {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) > len(out.userBuf) {
 				return ErrInvalidPayload
 			}
 			copy(out.userBuf[:], val)
 			out.userLen = uint8(len(val))
 			out.HasUsername = true
 		case "iss":
-			if !isStr || len(val) > len(out.issBuf) {
+			if out.HasIss || !isStr {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) > len(out.issBuf) {
 				return ErrInvalidPayload
 			}
 			if len(v.expectedIss) > 0 && !bytes.Equal(val, v.expectedIss) {
@@ -1112,6 +1150,9 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 			out.issLen = uint8(len(val))
 			out.HasIss = true
 		case "aud":
+			if out.HasAud {
+				return ErrInvalidPayload
+			}
 			var captured []byte
 			if !matchAudienceClaim(val, isStr, v.expectedAud, &captured) {
 				if isStr && len(v.expectedAud) > 0 {
@@ -1129,7 +1170,13 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 			out.audLen = uint8(len(captured))
 			out.HasAud = true
 		case "jti":
-			if !isStr || len(val) > len(out.jtiBuf) {
+			if out.HasJti || !isStr {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) > len(out.jtiBuf) {
 				return ErrInvalidPayload
 			}
 			copy(out.jtiBuf[:], val)
@@ -1177,7 +1224,7 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 
 		switch string(key) {
 		case "exp":
-			if isStr {
+			if out.HasExp || isStr {
 				return ErrInvalidPayload
 			}
 			expSec, ok := ParseNumeric(val)
@@ -1190,7 +1237,7 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 				return ErrExpiredToken
 			}
 		case "nbf":
-			if isStr {
+			if out.HasNbf || isStr {
 				return ErrInvalidPayload
 			}
 			nbfSec, ok := ParseNumeric(val)
@@ -1203,7 +1250,7 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 				return ErrNotValidYet
 			}
 		case "iat":
-			if isStr {
+			if out.HasIat || isStr {
 				return ErrInvalidPayload
 			}
 			iatSec, ok := ParseNumeric(val)
@@ -1211,8 +1258,15 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 				return ErrInvalidPayload
 			}
 			out.IssuedAt = int64(iatSec)
+			out.HasIat = true
 		case "sub":
-			if !isStr || len(val) == 0 || len(val) > len(out.subBuf) {
+			if out.HasSub || !isStr || len(val) == 0 {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) == 0 || len(val) > len(out.subBuf) {
 				return ErrInvalidPayload
 			}
 			copy(out.subBuf[:], val)
@@ -1222,14 +1276,26 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 				out.SubjectID = id
 			}
 		case "username":
-			if !isStr || len(val) > len(out.userBuf) {
+			if out.HasUsername || !isStr {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) > len(out.userBuf) {
 				return ErrInvalidPayload
 			}
 			copy(out.userBuf[:], val)
 			out.userLen = uint16(len(val))
 			out.HasUsername = true
 		case "iss":
-			if !isStr || len(val) > len(out.issBuf) {
+			if out.HasIss || !isStr {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) > len(out.issBuf) {
 				return ErrInvalidPayload
 			}
 			if len(v.expectedIss) > 0 && !bytes.Equal(val, v.expectedIss) {
@@ -1239,9 +1305,15 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 			out.issLen = uint16(len(val))
 			out.HasIss = true
 		case "aud":
+			if out.HasAud {
+				return ErrInvalidPayload
+			}
 			var captured []byte
 			if !matchAudienceClaim(val, isStr, v.expectedAud, &captured) {
-				if len(v.expectedAud) > 0 {
+				if isStr && len(v.expectedAud) > 0 {
+					return ErrInvalidAudience
+				}
+				if !isStr && len(val) > 0 && val[0] == '[' && len(v.expectedAud) > 0 {
 					return ErrInvalidAudience
 				}
 				return ErrInvalidPayload
@@ -1253,7 +1325,13 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 			out.audLen = uint16(len(captured))
 			out.HasAud = true
 		case "jti":
-			if !isStr || len(val) > len(out.jtiBuf) {
+			if out.HasJti || !isStr {
+				return ErrInvalidPayload
+			}
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
+			if len(val) > len(out.jtiBuf) {
 				return ErrInvalidPayload
 			}
 			copy(out.jtiBuf[:], val)
@@ -1281,6 +1359,9 @@ func (v *Verifier) parseLargeClaims(b []byte, now int64, out *ClaimsLarge) error
 // or a JSON array of strings) against expectedAud with zero heap allocations.
 func matchAudienceClaim(val []byte, isStr bool, expectedAud []byte, capturedOut *[]byte) bool {
 	if isStr {
+		if bytes.IndexByte(val, '\\') >= 0 {
+			val = UnescapeJSONInPlace(val)
+		}
 		if capturedOut != nil {
 			*capturedOut = val
 		}
@@ -1301,6 +1382,9 @@ func matchAudienceClaim(val []byte, isStr bool, expectedAud []byte, capturedOut 
 			return false
 		}
 		arrBody = rest
+		if bytes.IndexByte(elem, '\\') >= 0 {
+			elem = UnescapeJSONInPlace(elem)
+		}
 		if first {
 			if capturedOut != nil {
 				*capturedOut = elem

@@ -134,34 +134,36 @@ func (b *SignBuilder) SetClaimRawJSON(key string, rawJSON []byte) *SignBuilder {
 	return b
 }
 
+// Discard releases the internal Scratch buffer back to the pool if owned,
+// invalidating the builder. It is safe to call Discard multiple times or after Sign.
+// Typical usage:
+//   b := v.NewSigner(dst)
+//   defer b.Discard()
+func (b *SignBuilder) Discard() {
+	if b.owned && b.st != nil {
+		b.v.releaseScratch(b.st)
+		b.st = nil
+	}
+}
+
 // Sign finalizes the JSON payload, signs the token into dst, and returns the resulting slice.
 // If the SignBuilder was created via NewSigner, the internal Scratch is returned to the pool.
 func (b *SignBuilder) Sign() ([]byte, error) {
 	if b.st == nil {
 		return nil, ErrInvalidPayload
 	}
+	defer b.Discard()
 	if len(b.buf)+1 > len(b.st.payloadBuf) {
-		if b.owned {
-			b.v.releaseScratch(b.st)
-			b.st = nil
-		}
 		return nil, ErrPayloadTooLarge
 	}
 	if b.v.requireExp && !b.hasExp {
-		if b.owned {
-			b.v.releaseScratch(b.st)
-			b.st = nil
-		}
 		return nil, ErrMissingExp
 	}
 	b.buf = append(b.buf, '}')
 	tok := b.v.SignHS256WithScratch(b.dst, b.buf, b.st)
-	if b.owned {
-		b.v.releaseScratch(b.st)
-		b.st = nil
-	}
 	if tok == nil {
 		return nil, ErrNoSigningKey
 	}
 	return tok, nil
 }
+

@@ -2,6 +2,7 @@ package zerojwt
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
 
@@ -116,6 +117,59 @@ func TestIterators(t *testing.T) {
 	}
 	if brokenPropsCount != 1 {
 		t.Fatalf("expected 1 prop then abort on broken object, got %d", brokenPropsCount)
+	}
+
+	// 9. Non-destructive repeated iteration
+	escapedJSON := []byte(`{"name":"foo\"bar","role":"admin"}`)
+	var round1, round2 []string
+	for k, v := range ObjectProps(escapedJSON) {
+		round1 = append(round1, string(k)+":"+string(v))
+	}
+	for k, v := range ObjectProps(escapedJSON) {
+		round2 = append(round2, string(k)+":"+string(v))
+	}
+	if len(round1) != 2 || len(round2) != 2 || round1[0] != round2[0] || round1[1] != round2[1] {
+		t.Fatalf("expected non-destructive repeated iteration, got r1=%v r2=%v", round1, round2)
+	}
+
+	// 10. Optional errOut capture
+	var errArr error
+	for range ArrayElements([]byte("not_array"), &errArr) {
+	}
+	if !errors.Is(errArr, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for invalid array with errOut, got %v", errArr)
+	}
+	var errArrElem error
+	for range ArrayElements([]byte(`["a", @]`), &errArrElem) {
+	}
+	if !errors.Is(errArrElem, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for invalid array element, got %v", errArrElem)
+	}
+
+	var errObj error
+	for range ObjectProps([]byte("not_obj"), &errObj) {
+	}
+	if !errors.Is(errObj, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for invalid object with errOut, got %v", errObj)
+	}
+	var errObjProp error
+	for range ObjectProps([]byte(`{"a":"1", @}`), &errObjProp) {
+	}
+	if !errors.Is(errObjProp, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for invalid object prop, got %v", errObjProp)
+	}
+
+	var errProps error
+	for range ObjectProperties([]byte("not_obj"), &errProps) {
+	}
+	if !errors.Is(errProps, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for invalid object in ObjectProperties, got %v", errProps)
+	}
+	var errPropsElem error
+	for range ObjectProperties([]byte(`{"a":"1", @}`), &errPropsElem) {
+	}
+	if !errors.Is(errPropsElem, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for invalid prop in ObjectProperties, got %v", errPropsElem)
 	}
 }
 

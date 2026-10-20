@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -307,10 +306,7 @@ func TestZeroAllocations(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	// O runtime do Go <= 1.22 em darwin/arm64 apresenta 1 alocação espúria na stdlib do ed25519
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" && edVerifyAllocs <= 1 {
-		t.Logf("aviso: contornada alocação espúria da stdlib em darwin/arm64 (Go < 1.23): %v allocs/op", edVerifyAllocs)
-	} else if edVerifyAllocs != 0 {
+	if edVerifyAllocs != 0 {
 		t.Fatalf("expected 0 allocs/op in Ed25519 Verify, got %v", edVerifyAllocs)
 	}
 }

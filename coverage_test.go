@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -382,8 +383,14 @@ func TestComprehensiveCoverage(t *testing.T) {
 		if _, ok := ParsePositiveInt(nil); ok {
 			t.Fatal("expected false for nil ParsePositiveInt")
 		}
-		if _, ok := ParsePositiveInt(bytes.Repeat([]byte("1"), 19)); ok {
-			t.Fatal("expected false for len > 18")
+		if _, ok := ParsePositiveInt(bytes.Repeat([]byte("1"), 20)); ok {
+			t.Fatal("expected false for len > 19")
+		}
+		if _, ok := ParsePositiveInt([]byte("9223372036854775808")); ok {
+			t.Fatal("expected false for int64 overflow > 9223372036854775807")
+		}
+		if n, ok := ParsePositiveInt([]byte("9223372036854775807")); !ok || n != 9223372036854775807 {
+			t.Fatal("expected valid max int64")
 		}
 		if _, ok := ParsePositiveInt([]byte("12a")); ok {
 			t.Fatal("expected false for non-digits")
@@ -451,6 +458,50 @@ func TestComprehensiveCoverage(t *testing.T) {
 		}
 		if _, _, _, _, ok := NextJSONProp([]byte(`"key":["unclosed_arr`)); ok {
 			t.Fatal("expected false for unclosed nested array")
+		}
+		deepObj := append([]byte(`"key":`), bytes.Repeat([]byte(`{`), 33)...)
+		if _, _, _, _, ok := NextJSONProp(deepObj); ok {
+			t.Fatal("expected false for stack overflow in {")
+		}
+		deepArr := append([]byte(`"key":`), bytes.Repeat([]byte(`[`), 33)...)
+		if _, _, _, _, ok := NextJSONProp(deepArr); ok {
+			t.Fatal("expected false for stack overflow in [")
+		}
+		if _, val, isStr, _, ok := NextJSONProp([]byte(`"key":false`)); !ok || isStr || string(val) != "false" {
+			t.Fatal("expected valid false value")
+		}
+		if _, val, isStr, _, ok := NextJSONProp([]byte(`"key":null`)); !ok || isStr || string(val) != "null" {
+			t.Fatal("expected valid null value")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":{"a":]}`)); ok {
+			t.Fatal("expected false for mismatched bracket")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":tru`)); ok {
+			t.Fatal("expected false for truncated true")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":fal`)); ok {
+			t.Fatal("expected false for truncated false")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":nul`)); ok {
+			t.Fatal("expected false for truncated null")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":-`)); ok {
+			t.Fatal("expected false for lone minus")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":01`)); ok {
+			t.Fatal("expected false for leading zero")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":1.`)); ok {
+			t.Fatal("expected false for lone dot")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":1e`)); ok {
+			t.Fatal("expected false for lone exp")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":1e+`)); ok {
+			t.Fatal("expected false for lone exp sign")
+		}
+		if _, _, _, _, ok := NextJSONProp([]byte(`"key":123a`)); ok {
+			t.Fatal("expected false for invalid trailing char in number")
 		}
 	})
 
@@ -727,6 +778,152 @@ func TestComprehensiveCoverage(t *testing.T) {
 		unescN := UnescapeJSONInPlace([]byte("line1\\nline2"))
 		if !bytes.Contains(unescN, []byte("\n")) {
 			t.Fatal("expected newline in unescaped result")
+		}
+
+		// 8.11 Duplicate and escaped claims in parseStandardClaims, parseLargeClaims, VerifyCustom, validateHeader, and matchAudienceClaim
+		var clStd Claims
+		if err := v.parseStandardClaims([]byte(fmt.Sprintf(`{"sub":"u","exp":%d,"exp":%d}`, now+1000, now+2000)), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate exp, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(fmt.Sprintf(`{"sub":"u","nbf":%d,"nbf":%d}`, now-1000, now-500)), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate nbf, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","iat":100,"iat":200}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate iat, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","sub":"u2"}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate sub, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","username":"a","username":"b"}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate username, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","iss":"auth.test","iss":"auth.test"}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate iss, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","aud":"api.test","aud":"api.test"}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate aud, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","jti":"a","jti":"b"}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate jti, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"\u0075\u0031","username":"\u0061","iss":"auth\u002etest","aud":"api\u002etest","jti":"\u0063"}`), now, &clStd); err != nil {
+			t.Fatalf("expected valid parse with escaped claims, got %v", err)
+		}
+		if string(clStd.Subject()) != "u1" || string(clStd.Username()) != "a" || string(clStd.Issuer()) != "auth.test" || string(clStd.Audience()) != "api.test" || string(clStd.JTI()) != "c" {
+			t.Fatalf("unexpected unescaped claims: %v", clStd)
+		}
+
+		var clLrg ClaimsLarge
+		if err := v.parseLargeClaims([]byte(fmt.Sprintf(`{"sub":"u","exp":%d,"exp":%d}`, now+1000, now+2000)), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate exp in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(fmt.Sprintf(`{"sub":"u","nbf":%d,"nbf":%d}`, now-1000, now-500)), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate nbf in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","iat":100,"iat":200}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate iat in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","sub":"u2"}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate sub in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","username":"a","username":"b"}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate username in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","iss":"auth.test","iss":"auth.test"}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate iss in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","aud":"api.test","aud":"api.test"}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate aud in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","jti":"a","jti":"b"}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate jti in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"\u0075\u0031","username":"\u0061","iss":"auth\u002etest","aud":"api\u002etest","jti":"\u0063"}`), now, &clLrg); err != nil {
+			t.Fatalf("expected valid parse with escaped claims in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","aud":["mismatch"]}`), now, &clLrg); !errors.Is(err, ErrInvalidAudience) {
+			t.Fatalf("expected ErrInvalidAudience for array aud mismatch in large, got %v", err)
+		}
+
+		tokDupExp := v.Sign(nil, []byte(`{"exp":10000000000,"exp":20000000000}`))
+		if err := v.VerifyCustom(tokDupExp, now, nil); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate exp in VerifyCustom, got %v", err)
+		}
+		tokDupNbf := v.Sign(nil, []byte(`{"nbf":100,"nbf":200}`))
+		if err := v.VerifyCustom(tokDupNbf, now, nil); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for duplicate nbf in VerifyCustom, got %v", err)
+		}
+		vIss := NewVerifierWithOptions(secret, Options{ExpectedIssuer: "auth.service"})
+		tokEscIss := vIss.Sign(nil, []byte(`{"sub":"1","iss":"auth\u002eservice"}`))
+		if err := vIss.VerifyCustom(tokEscIss, now, nil); err != nil {
+			t.Fatalf("expected valid VerifyCustom with escaped iss, got %v", err)
+		}
+
+		hdrDupAlg := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","alg":"HS256"}`))
+		if err := v.Verify([]byte(hdrDupAlg+".e30.c2ln"), now, &Claims{}); !errors.Is(err, ErrInvalidHeader) {
+			t.Fatalf("expected ErrInvalidHeader for duplicate alg, got %v", err)
+		}
+		hdrDupTyp := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT","typ":"JWT"}`))
+		if err := v.Verify([]byte(hdrDupTyp+".e30.c2ln"), now, &Claims{}); !errors.Is(err, ErrInvalidHeader) {
+			t.Fatalf("expected ErrInvalidHeader for duplicate typ, got %v", err)
+		}
+		hdrDupKid := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","kid":"k1","kid":"k2"}`))
+		if err := v.Verify([]byte(hdrDupKid+".e30.c2ln"), now, &Claims{}); !errors.Is(err, ErrInvalidHeader) {
+			t.Fatalf("expected ErrInvalidHeader for duplicate kid, got %v", err)
+		}
+		vKid := NewVerifierWithOptions(secret, Options{ActiveKeyID: "my-key-1", Keys: []Key{{ID: "my-key-1", Secret: secret}}})
+		hdrEscKid := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","kid":"my\u002dkey\u002d1"}`))
+		tokKidEsc := vKid.Sign(nil, []byte(`{"sub":"u"}`))
+		partsKid := bytes.Split(tokKidEsc, []byte("."))
+		macKid := hmac.New(sha256.New, secret)
+		macKid.Write([]byte(hdrEscKid + "." + string(partsKid[1])))
+		sigEscKid := base64.RawURLEncoding.EncodeToString(macKid.Sum(nil))
+		if err := vKid.Verify([]byte(hdrEscKid+"."+string(partsKid[1])+"."+sigEscKid), now, &Claims{}); err != nil {
+			t.Fatalf("expected valid verify for escaped kid, got %v", err)
+		}
+
+		var capAud []byte
+		if !matchAudienceClaim([]byte(`api\u002etest`), true, []byte("api.test"), &capAud) {
+			t.Fatal("expected match for escaped string aud")
+		}
+		if !matchAudienceClaim([]byte(`["api\u002etest"]`), false, []byte("api.test"), &capAud) {
+			t.Fatal("expected match for escaped array aud")
+		}
+
+		// ParseNumeric !ok branches in parseStandardClaims
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","exp":true}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean exp, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","nbf":true}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean nbf, got %v", err)
+		}
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","iat":true}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean iat, got %v", err)
+		}
+		longJti65 := string(bytes.Repeat([]byte("j"), 65))
+		if err := v.parseStandardClaims([]byte(`{"sub":"u","jti":"`+longJti65+`"}`), now, &clStd); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for jti > 64 in standard, got %v", err)
+		}
+
+		// ParseNumeric !ok branches in parseLargeClaims
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","exp":true}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean exp in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","nbf":true}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean nbf in large, got %v", err)
+		}
+		if err := v.parseLargeClaims([]byte(`{"sub":"u","iat":true}`), now, &clLrg); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean iat in large, got %v", err)
+		}
+
+		// ParseNumeric !ok branches in VerifyCustom
+		tokBoolExp := v.Sign(nil, []byte(`{"sub":"u","exp":true}`))
+		if err := v.VerifyCustom(tokBoolExp, now, nil); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean exp in VerifyCustom, got %v", err)
+		}
+		tokBoolNbf := v.Sign(nil, []byte(`{"sub":"u","nbf":true}`))
+		if err := v.VerifyCustom(tokBoolNbf, now, nil); !errors.Is(err, ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload for boolean nbf in VerifyCustom, got %v", err)
 		}
 	})
 }

@@ -120,7 +120,6 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		isStr = true
 		i++
 		vStart := i
-		hasEscape := false
 		// Unrolled 4-byte fast scan for clean ASCII string characters
 		for i+4 <= n {
 			if escapeLut[b[i]] || escapeLut[b[i+1]] || escapeLut[b[i+2]] || escapeLut[b[i+3]] {
@@ -130,7 +129,6 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		}
 		for i < n {
 			if b[i] == '\\' {
-				hasEscape = true
 				i += 2
 				continue
 			}
@@ -142,59 +140,121 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		if i >= n {
 			return nil, false, 0, false
 		}
-		raw := b[vStart:i]
-		if hasEscape {
-			val = UnescapeJSONInPlace(raw)
-		} else {
-			val = raw
-		}
+		val = b[vStart:i]
 		i++ // skip closing quote
 		return val, true, i, true
 	} else if b[i] == '{' || b[i] == '[' {
-		open := b[i]
-		closeChar := byte('}')
-		if open == '[' {
-			closeChar = ']'
+		var stack [32]byte
+		sp := 0
+		if b[i] == '{' {
+			stack[sp] = '}'
+		} else {
+			stack[sp] = ']'
 		}
-		depth := 1
+		sp++
 		vStart := i
 		i++
 		inS := false
-		for i < n && depth > 0 {
+		for i < n && sp > 0 {
+			c := b[i]
 			if inS {
-				if b[i] == '\\' {
+				if c == '\\' {
 					i += 2
 					continue
 				}
-				if b[i] == '"' {
+				if c == '"' {
 					inS = false
 				}
 				i++
 				continue
 			}
-			if b[i] == '"' {
+			switch c {
+			case '"':
 				inS = true
-			} else if b[i] == open {
-				depth++
-			} else if b[i] == closeChar {
-				depth--
+			case '{':
+				if sp >= len(stack) {
+					return nil, false, 0, false
+				}
+				stack[sp] = '}'
+				sp++
+			case '[':
+				if sp >= len(stack) {
+					return nil, false, 0, false
+				}
+				stack[sp] = ']'
+				sp++
+			case '}', ']':
+				sp--
+				if stack[sp] != c {
+					return nil, false, 0, false
+				}
 			}
 			i++
 		}
-		if depth != 0 {
+		if sp != 0 {
 			return nil, false, 0, false
 		}
 		return b[vStart:i], false, i, true
-	} else {
-		vStart := i
-		for i < n && !numEndLut[b[i]] {
-			i++
+	} else if b[i] == 't' {
+		if i+4 <= n && b[i+1] == 'r' && b[i+2] == 'u' && b[i+3] == 'e' && (i+4 == n || numEndLut[b[i+4]]) {
+			return b[i : i+4], false, i + 4, true
 		}
-		if i == vStart {
+		return nil, false, 0, false
+	} else if b[i] == 'f' {
+		if i+5 <= n && b[i+1] == 'a' && b[i+2] == 'l' && b[i+3] == 's' && b[i+4] == 'e' && (i+5 == n || numEndLut[b[i+5]]) {
+			return b[i : i+5], false, i + 5, true
+		}
+		return nil, false, 0, false
+	} else if b[i] == 'n' {
+		if i+4 <= n && b[i+1] == 'u' && b[i+2] == 'l' && b[i+3] == 'l' && (i+4 == n || numEndLut[b[i+4]]) {
+			return b[i : i+4], false, i + 4, true
+		}
+		return nil, false, 0, false
+	} else if b[i] == '-' || (b[i] >= '0' && b[i] <= '9') {
+		vStart := i
+		if b[i] == '-' {
+			i++
+			if i >= n || b[i] < '0' || b[i] > '9' {
+				return nil, false, 0, false
+			}
+		}
+		if b[i] == '0' {
+			i++
+			if i < n && b[i] >= '0' && b[i] <= '9' {
+				return nil, false, 0, false // leading zero forbidden
+			}
+		} else {
+			for i < n && b[i] >= '0' && b[i] <= '9' {
+				i++
+			}
+		}
+		if i < n && b[i] == '.' {
+			i++
+			if i >= n || b[i] < '0' || b[i] > '9' {
+				return nil, false, 0, false
+			}
+			for i < n && b[i] >= '0' && b[i] <= '9' {
+				i++
+			}
+		}
+		if i < n && (b[i] == 'e' || b[i] == 'E') {
+			i++
+			if i < n && (b[i] == '+' || b[i] == '-') {
+				i++
+			}
+			if i >= n || b[i] < '0' || b[i] > '9' {
+				return nil, false, 0, false
+			}
+			for i < n && b[i] >= '0' && b[i] <= '9' {
+				i++
+			}
+		}
+		if i < n && !numEndLut[b[i]] {
 			return nil, false, 0, false
 		}
 		return b[vStart:i], false, i, true
 	}
+	return nil, false, 0, false
 }
 
 // TrimJSONObject strips surrounding whitespace and outer '{' and '}' braces from a JSON object.
@@ -290,22 +350,23 @@ func ParseNumeric(b []byte) (float64, bool) {
 }
 
 // ParsePositiveInt parses a strictly positive 64-bit integer from a byte slice of digits.
+// Supports full int64 range up to 19 digits (e.g. distributed snowflake IDs).
 func ParsePositiveInt(val []byte) (int64, bool) {
-	if len(val) == 0 || len(val) > 18 {
+	if len(val) == 0 || len(val) > 19 {
 		return 0, false
 	}
-	var n int64
+	var n uint64
 	for i := 0; i < len(val); i++ {
 		d := uint(val[i] - '0')
 		if d > 9 {
 			return 0, false
 		}
-		n = n*10 + int64(d)
+		n = n*10 + uint64(d)
 	}
-	if n <= 0 {
+	if n == 0 || n > 9223372036854775807 {
 		return 0, false
 	}
-	return n, true
+	return int64(n), true
 }
 
 // UnescapeJSONInPlace unescapes JSON string escape sequences in-place without allocating memory.

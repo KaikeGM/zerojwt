@@ -9,9 +9,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -123,6 +123,7 @@ func TestConfigValidationMatrix(t *testing.T) {
 		"strict HS384 short":   {[]byte(strings.Repeat("x", 47)), Options{Algorithm: AlgHS384, StrictSecretLength: true}},
 		"strict HS512 short":   {[]byte(strings.Repeat("x", 63)), Options{Algorithm: AlgHS512, StrictSecretLength: true}},
 		"strict key too short": {[]byte(secA), Options{StrictSecretLength: true, Keys: []Key{{ID: "a", Secret: []byte("short")}}}},
+		"sub-second leeway":    {[]byte(secA), Options{Leeway: 500 * time.Millisecond}},
 	}
 	for name, c := range bad {
 		if _, err := TryNewVerifier(c.secret, c.opts); !errors.Is(err, ErrInvalidConfig) {
@@ -333,18 +334,10 @@ func TestHardeningKeepsZeroAllocs(t *testing.T) {
 		tok := append([]byte(nil), v.SignClaims(buf[:0], []byte("u1"), []byte("a"), tnow, tnow+3600)...)
 		var c Claims
 		if n := testing.AllocsPerRun(100, func() { _ = v.Verify(tok, tnow, &c) }); n != 0 {
-			if name == "EdDSA" && runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" && n <= 1 {
-				t.Logf("aviso: contornada alocação espúria da stdlib em darwin/arm64 (Go < 1.23): %v allocs/op", n)
-			} else {
-				t.Errorf("%s Verify allocs/op = %v, want 0", name, n)
-			}
+			t.Errorf("%s Verify allocs/op = %v, want 0", name, n)
 		}
 		if n := testing.AllocsPerRun(100, func() { _ = v.SignClaims(buf[:0], []byte("u1"), []byte("a"), tnow, tnow+3600) }); n != 0 {
-			if name == "EdDSA" && runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" && n <= 1 {
-				t.Logf("aviso: contornada alocação espúria da stdlib em darwin/arm64 (Go < 1.23): %v allocs/op", n)
-			} else {
-				t.Errorf("%s SignClaims allocs/op = %v, want 0", name, n)
-			}
+			t.Errorf("%s SignClaims allocs/op = %v, want 0", name, n)
 		}
 	}
 }

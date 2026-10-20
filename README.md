@@ -6,7 +6,7 @@
 [![Allocations](https://img.shields.io/badge/allocations-0_B%2Fop-blue.svg)](https://github.com/KaikeGM/zerojwt)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-`zerojwt` is a pure Go, zero-dependency library for signing and verifying **JSON Web Tokens (JWT / RFC 7519)** in **~185 ns/op (parallel) / ~400–640 ns/op (single-core)** with guaranteed **`0 B/op` and `0 allocs/op`** on critical execution paths.
+`zerojwt` is a pure Go, zero-dependency library for signing and verifying **JSON Web Tokens (JWT / RFC 7519)** in **~215 ns/op (parallel) / ~415–700 ns/op (single-core)** with guaranteed **`0 B/op` and `0 allocs/op`** on critical execution paths.
 
 Born out of **PR #48 (`go-gnet-kaikegm`)** in *The $12 Server Challenge* — where a single OS thread sustained **300,000 concurrent keep-alive connections** and **35,577 req/s** — `zerojwt` eliminates the reflection, `encoding/json` dynamic map allocations, and Garbage Collector (GC) pressure of traditional Go JWT packages while delivering complete, industrial-grade capabilities.
 
@@ -69,27 +69,27 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 #### 1. Token Verification (Verify & Parse Claims)
 
-| Library | Mode / Strategy | Throughput | Latency | Memory / op | Allocs / op |
+| Library | Mode / Strategy | Throughput ($10^9 / \text{ns}$) | Latency | Memory / op | Allocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **`zerojwt`** | **Parallel (Multi-Core)** | **~6,075,000 ops/s** | **213.8 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt`** | **Single-Core (Scratch)** | **~1,595,000 ops/s** | **680.0 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt`** | **Single-Core (Pool)** | **~1,658,000 ops/s** | **767.3 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| `kataras/jwt` | Parallel (Multi-Core) | ~1,373,000 ops/s | 864.3 ns/op | 1,075 B/op | 15 allocs/op |
-| `kataras/jwt` | Single-Core | ~386,000 ops/s | 3,184.0 ns/op | 1,073 B/op | 15 allocs/op |
-| `golang-jwt/jwt/v5` | Parallel (Multi-Core) | ~643,000 ops/s | 1,602.0 ns/op | 2,098 B/op | 37 allocs/op |
-| `golang-jwt/jwt/v5` | Single-Core | ~235,000 ops/s | 4,904.0 ns/op | 2,091 B/op | 37 allocs/op |
-| `lestrrat-go/jwx/v2` | Parallel (Multi-Core) | ~250,000 ops/s | 4,083.0 ns/op | 6,135 B/op | 108 allocs/op |
-| `lestrrat-go/jwx/v2` | Single-Core | ~103,000 ops/s | 11,066.0 ns/op | 6,114 B/op | 108 allocs/op |
+| **`zerojwt`** | **Parallel (Multi-Core)** | **~4,640,000 ops/s** | **215.6 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **Single-Core (Scratch)** | **~1,460,000 ops/s** | **683.1 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **Single-Core (Pool)** | **~1,400,000 ops/s** | **711.4 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| `kataras/jwt` | Parallel (Multi-Core) | ~912,000 ops/s | 1,096.0 ns/op | 1,076 B/op | 15 allocs/op |
+| `kataras/jwt` | Single-Core | ~356,000 ops/s | 2,809.0 ns/op | 1,073 B/op | 15 allocs/op |
+| `golang-jwt/jwt/v5` | Parallel (Multi-Core) | ~554,000 ops/s | 1,803.0 ns/op | 2,097 B/op | 37 allocs/op |
+| `golang-jwt/jwt/v5` | Single-Core | ~212,000 ops/s | 4,718.0 ns/op | 2,091 B/op | 37 allocs/op |
+| `lestrrat-go/jwx/v2` | Parallel (Multi-Core) | ~205,000 ops/s | 4,884.0 ns/op | 6,134 B/op | 108 allocs/op |
+| `lestrrat-go/jwx/v2` | Single-Core | ~93,000 ops/s | 10,766.0 ns/op | 6,113 B/op | 108 allocs/op |
 
 #### 2. Token Generation (Signing)
 
-| Library | Implementation | Throughput | Latency | Memory / op | Allocs / op |
+| Library | Implementation | Throughput ($10^9 / \text{ns}$) | Latency | Memory / op | Allocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **`zerojwt`** | **`SignClaims`** | **~2,950,000 ops/s** | **414.0 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt`** | **`SignBuilder`** | **~2,570,000 ops/s** | **502.2 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| `kataras/jwt` | `jwt.Sign` | ~654,000 ops/s | 1,552.0 ns/op | 1,208 B/op | 14 allocs/op |
-| `golang-jwt/jwt/v5` | `SignedString` | ~316,000 ops/s | 3,586.0 ns/op | 2,338 B/op | 36 allocs/op |
-| `lestrrat-go/jwx/v2` | `jwt.Sign` | ~153,000 ops/s | 7,618.0 ns/op | 4,933 B/op | 118 allocs/op |
+| **`zerojwt`** | **`SignClaims`** | **~2,350,000 ops/s** | **425.5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **`SignBuilder`** | **~2,180,000 ops/s** | **458.5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| `kataras/jwt` | `jwt.Sign` | ~651,000 ops/s | 1,535.0 ns/op | 1,208 B/op | 14 allocs/op |
+| `golang-jwt/jwt/v5` | `SignedString` | ~276,000 ops/s | 3,626.0 ns/op | 2,338 B/op | 36 allocs/op |
+| `lestrrat-go/jwx/v2` | `jwt.Sign` | ~135,000 ops/s | 7,392.0 ns/op | 4,933 B/op | 118 allocs/op |
 
 > **Key takeaway:** Traditional JWT libraries allocate between 14 and 108 objects on the heap per token validation, accumulating megabytes of garbage and triggering constant GC pauses under production load (10k+ req/s). `zerojwt` performs **zero heap allocations**, allowing web gateways and event loops to handle maximum connection density with flat, predictable latencies.
 
@@ -361,6 +361,7 @@ Build custom JWT payloads with arbitrary attributes without allocating `map[stri
 ```go
 var tokBuf [1024]byte
 builder := verifier.NewSigner(tokBuf[:0])
+defer builder.Discard() // Safely returns Scratch to pool if an error returns before Sign()
 
 token, err := builder.
 	SetSubject([]byte("usr_1001")).
@@ -380,6 +381,8 @@ if err != nil {
 	panic(err)
 }
 ```
+
+> **Memory safety tip:** `Sign()` automatically returns the pooled `*Scratch` instance on completion. Adding `defer builder.Discard()` protects against memory leaks when an error or early `return` occurs before `Sign()` is invoked; calling `Discard()` after `Sign()` is a safe no-op.
 
 ---
 
@@ -405,10 +408,10 @@ err := verifier.VerifyCustom(token, now, func(key, val []byte, isStr bool) bool 
 
 ### Go 1.23+ Zero-Allocation Range-Over-Func Iterators
 
-Go 1.23 standardizes iterators via `iter.Seq` and `iter.Seq2`. `zerojwt` provides native iterators that compile down with complete closure inlining, running at **~22,000,000 ops/s** with **`0 B/op` and `0 allocs/op`**:
+Go 1.23 standardizes iterators via `iter.Seq` and `iter.Seq2`. `zerojwt` provides native iterators that compile down with complete closure inlining, running at **~18,000,000–19,000,000 ops/s** (~52–55 ns/op) with **`0 B/op` and `0 allocs/op`**:
 
 ```go
-// 1. Iterate over JSON array elements:
+// 1. Iterate over JSON array elements (non-destructive, safe for multiple passes):
 for elem, isStr := range zerojwt.ArrayElements(rawArray) {
 	fmt.Printf("Element: %s (isStr: %v)\n", elem, isStr)
 }
@@ -421,6 +424,20 @@ for key, val := range zerojwt.ObjectProps(rawObject) {
 // 3. Iterate over properties with full type information:
 for prop := range zerojwt.ObjectProperties(rawObject) {
 	fmt.Printf("Key: %s, Val: %s, IsString: %v\n", prop.Key, prop.Val, prop.IsStr)
+}
+```
+
+#### Strict Error Detection
+
+When iterating over untrusted or external JSON payloads, iterators accept an optional `*error` pointer. If the JSON structure is truncated or encounters invalid syntax, iteration stops gracefully and assigns `zerojwt.ErrInvalidPayload`:
+
+```go
+var scanErr error
+for elem, isStr := range zerojwt.ArrayElements(rawArray, &scanErr) {
+	// ...
+}
+if scanErr != nil {
+	return fmt.Errorf("malformed claims array: %w", scanErr)
 }
 ```
 
@@ -573,16 +590,21 @@ Destroy must not be called concurrently with other methods.
 
 ## ⚡ Profile-Guided Optimization (PGO)
 
-`zerojwt` includes a factory `default.pgo` optimization profile captured under rigorous load testing.
+When compiling production binaries, Go 1.20+ supports Profile-Guided Optimization (PGO). The Go compiler automatically detects and uses a `default.pgo` profile file located directly in the **`main` package directory** being built.
 
-When building your service with Go 1.23+, the Go compiler automatically discovers `default.pgo` and optimizes register allocation, hot branch predictions, and function inlining:
+Because Go applies PGO at the executable level rather than per-dependency, you can optimize your entire service (including `zerojwt`'s inner verification and parsing routines) by collecting a profile from production:
 
 ```bash
-# Automatically applies default.pgo
-go build -o my-service main.go
+# 1. Capture a representative 30-second CPU profile from your running service
+curl -o default.pgo "http://localhost:6060/debug/pprof/profile?seconds=30"
+
+# 2. Place default.pgo in your main package directory (alongside main.go)
+
+# 3. Compile with Go 1.23+ (the compiler automatically discovers default.pgo)
+go build -o my-service .
 ```
 
-To verify PGO application during build:
+To verify PGO optimizations during the build:
 
 ```bash
 go build -gcflags="-m=2" 2>&1 | grep "pgo inline"
@@ -608,7 +630,7 @@ go build -gcflags="-m=2" 2>&1 | grep "pgo inline"
 - `VerifyLargeWithScratch(tok []byte, nowUnix int64, out *ClaimsLarge, st *Scratch) error`: Validates token into `ClaimsLarge` using caller-supplied `Scratch`.
 - `VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val []byte, isStr bool) bool) error`: Validates signature and temporal claims, scanning arbitrary claims with zero allocations.
 
-### Signing Methods
+### Signing Methods & Builder
 All `Sign*` methods return `nil` (never a token with a bogus signature) when the verifier cannot sign (`CanSign() == false`), when the signing operation fails, or, with `RequireExp`, when `SignClaims` is called with `exp <= 0`.
 
 - `Sign(dst []byte, payloadJSON []byte) []byte`: Signs raw JSON payload using default buffers.
@@ -616,6 +638,8 @@ All `Sign*` methods return `nil` (never a token with a bogus signature) when the
 - `SignWithScratch(dst, payloadJSON []byte, st *Scratch) []byte`: Signs payload using caller-supplied `Scratch`.
 - `NewSigner(dst []byte) SignBuilder`: Creates a fluent builder for custom claims backed by `sync.Pool`.
 - `NewSignerWithScratch(dst []byte, st *Scratch) SignBuilder`: Creates a fluent builder using caller-supplied `Scratch`.
+- `(*SignBuilder).Discard()`: Releases internal `Scratch` buffer back to `sync.Pool` if owned (idempotent).
+- `(*SignBuilder).Sign() ([]byte, error)`: Signs the payload and automatically releases pooled `Scratch`.
 
 ### Fast Lexer & Parser (`scanner.go`)
 - `NextJSONProp(b []byte) (key, val []byte, isStr bool, rest []byte, ok bool)`: Extracts the next `"key": value` from a JSON object body in-place.
@@ -623,14 +647,14 @@ All `Sign*` methods return `nil` (never a token with a bogus signature) when the
 - `TrimJSONObject(b []byte) ([]byte, bool)`: Strips whitespace and outer `{` and `}` braces.
 - `TrimJSONArray(b []byte) ([]byte, bool)`: Strips whitespace and outer `[` and `]` brackets.
 - `ParseNumeric(b []byte) (float64, bool)`: Parses integer, decimal, and scientific notation floats in zero allocations.
-- `ParsePositiveInt(b []byte) (int64, bool)`: Ultra-fast integer parser.
+- `ParsePositiveInt(b []byte) (int64, bool)`: Ultra-fast 64-bit integer parser supporting up to 19 digits (Snowflake IDs).
 - `UnescapeJSONInPlace(s []byte) []byte`: Decodes escape sequences and Unicode code points in-place.
 - `AppendEscapedJSONString(dst, s []byte) []byte`: Appends a JSON-safe quoted string.
 
 ### Go 1.23+ Iterators (`iter.go`)
-- `ArrayElements(rawArray []byte) iter.Seq2[[]byte, bool]`: Traversing JSON array elements with zero allocations.
-- `ObjectProps(rawObject []byte) iter.Seq2[[]byte, []byte]`: Traversing JSON object key-value pairs with zero allocations.
-- `ObjectProperties(rawObject []byte) iter.Seq[JSONProp]`: Traversing JSON object properties with full type metadata.
+- `ArrayElements(rawArray []byte, errOut ...*error) iter.Seq2[[]byte, bool]`: Non-destructive traversal of JSON array elements with zero allocations.
+- `ObjectProps(rawObject []byte, errOut ...*error) iter.Seq2[[]byte, []byte]`: Non-destructive traversal of JSON object key-value pairs with zero allocations.
+- `ObjectProperties(rawObject []byte, errOut ...*error) iter.Seq[JSONProp]`: Non-destructive traversal of JSON object properties with full type metadata.
 
 ---
 
