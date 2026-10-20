@@ -68,30 +68,31 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 *Environment: Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (8 logical CPUs), Linux amd64, Go 1.23+.*
 *Payload: HS256 32-byte secret, standard registered claims (`sub: "12345"`, `iat`, `exp`), plus custom claim (`user: "golden_ember_1"`).*
+*Fair clock evaluation: Verification benchmarks for `zerojwt` invoke `time.Now().Unix()` on each iteration to match competing libraries that call system time internally.*
 
 #### 1. Token Verification (Verify & Parse Claims)
 
-| Library | Mode / Strategy | Throughput ($10^9 / \text{ns}$) | Latency | Memory / op | Allocs / op |
+| Library | Mode / Strategy | Throughput ($10^9 / \text{ns}$) | Avg Time / op | Memory / op | Allocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **`zerojwt`** | **Parallel (Multi-Core)** | **~4,640,000 ops/s** | **215.6 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt`** | **Single-Core (Scratch)** | **~1,460,000 ops/s** | **683.1 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt`** | **Single-Core (Pool)** | **~1,400,000 ops/s** | **711.4 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| `kataras/jwt` | Parallel (Multi-Core) | ~912,000 ops/s | 1,096.0 ns/op | 1,076 B/op | 15 allocs/op |
-| `kataras/jwt` | Single-Core | ~356,000 ops/s | 2,809.0 ns/op | 1,073 B/op | 15 allocs/op |
-| `golang-jwt/jwt/v5` | Parallel (Multi-Core) | ~554,000 ops/s | 1,803.0 ns/op | 2,097 B/op | 37 allocs/op |
-| `golang-jwt/jwt/v5` | Single-Core | ~212,000 ops/s | 4,718.0 ns/op | 2,091 B/op | 37 allocs/op |
-| `lestrrat-go/jwx/v2` | Parallel (Multi-Core) | ~205,000 ops/s | 4,884.0 ns/op | 6,134 B/op | 108 allocs/op |
-| `lestrrat-go/jwx/v2` | Single-Core | ~93,000 ops/s | 10,766.0 ns/op | 6,113 B/op | 108 allocs/op |
+| **`zerojwt`** | **Parallel (Multi-Core)** | **~4,750,000 ops/s** | **210.5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **Single-Core (Scratch)** | **~1,387,000 ops/s** | **720.9 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **Single-Core (Pool)** | **~1,372,000 ops/s** | **728.5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| `kataras/jwt` | Parallel (Multi-Core) | ~951,000 ops/s | 1,051.0 ns/op | 1,075 B/op | 15 allocs/op |
+| `kataras/jwt` | Single-Core | ~354,000 ops/s | 2,821.0 ns/op | 1,073 B/op | 15 allocs/op |
+| `golang-jwt/jwt/v5` | Parallel (Multi-Core) | ~575,000 ops/s | 1,739.0 ns/op | 2,097 B/op | 37 allocs/op |
+| `golang-jwt/jwt/v5` | Single-Core | ~209,000 ops/s | 4,780.0 ns/op | 2,091 B/op | 37 allocs/op |
+| `lestrrat-go/jwx/v2` | Parallel (Multi-Core) | ~185,000 ops/s | 5,385.0 ns/op | 6,135 B/op | 108 allocs/op |
+| `lestrrat-go/jwx/v2` | Single-Core | ~91,000 ops/s | 10,948.0 ns/op | 6,112 B/op | 108 allocs/op |
 
 #### 2. Token Generation (Signing)
 
-| Library | Implementation | Throughput ($10^9 / \text{ns}$) | Latency | Memory / op | Allocs / op |
+| Library | Implementation | Throughput ($10^9 / \text{ns}$) | Avg Time / op | Memory / op | Allocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **`zerojwt`** | **`SignClaims`** | **~2,350,000 ops/s** | **425.5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| **`zerojwt`** | **`SignBuilder`** | **~2,180,000 ops/s** | **458.5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
-| `kataras/jwt` | `jwt.Sign` | ~651,000 ops/s | 1,535.0 ns/op | 1,208 B/op | 14 allocs/op |
-| `golang-jwt/jwt/v5` | `SignedString` | ~276,000 ops/s | 3,626.0 ns/op | 2,338 B/op | 36 allocs/op |
-| `lestrrat-go/jwx/v2` | `jwt.Sign` | ~135,000 ops/s | 7,392.0 ns/op | 4,933 B/op | 118 allocs/op |
+| **`zerojwt`** | **`SignClaims`** | **~2,300,000 ops/s** | **434.7 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| **`zerojwt`** | **`SignBuilder`** | **~2,083,000 ops/s** | **480.0 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
+| `kataras/jwt` | `jwt.Sign` | ~619,000 ops/s | 1,613.0 ns/op | 1,208 B/op | 14 allocs/op |
+| `golang-jwt/jwt/v5` | `SignedString` | ~276,000 ops/s | 3,617.0 ns/op | 2,338 B/op | 36 allocs/op |
+| `lestrrat-go/jwx/v2` | `jwt.Sign` | ~131,000 ops/s | 7,617.0 ns/op | 4,933 B/op | 118 allocs/op |
 
 > **Key takeaway:** Traditional JWT libraries allocate between 14 and 108 objects on the heap per token validation, accumulating megabytes of garbage and triggering constant GC pauses under production load (10k+ req/s). `zerojwt` performs **zero heap allocations**, allowing web gateways and event loops to handle maximum connection density with flat, predictable latencies.
 
@@ -210,6 +211,11 @@ func main() {
 		claims.Subject(), claims.Username(), claims.ExpiresAt)
 }
 ```
+
+> [!IMPORTANT]
+> **Production Best Practices:**
+> 1. **Always enforce token expiration:** RFC 7519 does not mandate the `exp` claim, so `zerojwt`'s default `Options{}` permits unexpired tokens if `exp` is omitted. For production APIs, configure `RequireExp: true` in `Options{}` so any token lacking `exp` is rejected immediately (`ErrMissingExp`).
+> 2. **Check `Sign*` return value:** `Sign`, `SignClaims`, and `SignWithScratch` report failure by returning `nil` (e.g. when payload size exceeds `MaxPayloadSize`, signing key is missing, or `RequireExp` is violated). Always check `if token == nil { ... }`, or use `verifier.NewSigner()` for explicit typed errors (`ErrPayloadTooLarge`, etc.).
 
 ---
 

@@ -15,6 +15,7 @@ func BenchmarkVerifyConcurrentPool(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		now := time.Now().Unix()
 		if err := v.Verify(tok, now, &claims); err != nil {
 			b.Fatal(err)
 		}
@@ -31,6 +32,7 @@ func BenchmarkVerifySingleThreadScratch(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		now := time.Now().Unix()
 		if err := v.VerifyWithScratch(tok, now, &claims, st); err != nil {
 			b.Fatal(err)
 		}
@@ -47,6 +49,7 @@ func BenchmarkVerifyParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		var claims Claims
 		for pb.Next() {
+			now := time.Now().Unix()
 			if err := v.Verify(tok, now, &claims); err != nil {
 				b.Fatal(err)
 			}
@@ -98,6 +101,7 @@ func BenchmarkVerifyEd25519(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		now := time.Now().Unix()
 		if err := v.Verify(tok, now, &claims); err != nil {
 			b.Fatal(err)
 		}

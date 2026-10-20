@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.2.4] - 2026-10-20
+
+### Fixed
+- **Payload Size Enforcement on Signing (`Sign`, `SignWithScratch`, `SignClaims`, `SignHS256`):** Added `len(payloadJSON) > v.maxPayloadSize` guard to eliminate issuer/verifier asymmetry where a verifier could sign tokens exceeding its own `MaxPayloadSize` that it would subsequently reject upon verification (`ErrPayloadTooLarge`). Oversized payloads now safely return `nil` without modifying destination buffers.
+- **Fair Benchmark Clock Evaluation:** Normalized verification benchmarks in `benchmarks/benchmarks_test.go` and `bench_test.go` to invoke `time.Now().Unix()` on each iteration, eliminating unearned ~18ns vDSO clock advantages and leveling measurement against competitor libraries that sample system time internally.
+- **Benchmark Column Precision:** Renamed the "Latency" column in benchmark tables to "Avg Time / op" ("Tempo Médio / op" in Portuguese) for standard Go microbenchmark nomenclature.
+
+### Documentation
+- **Explicit `Sign*` Failure Handling:** Documented that `Sign`, `SignWithScratch`, and `SignClaims` return `nil` on failure (e.g. when payload size exceeds `MaxPayloadSize`, signing key is missing, or `RequireExp` is violated) and reminded callers to check return values or use `NewSigner()` for explicit typed errors.
+- **Production `RequireExp` Recommendation:** Added callouts in both `README.md` and `README_pt-BR.md` emphasizing configuring `RequireExp: true` in production `Options{}` so tokens omitting `exp` are rejected immediately (`ErrMissingExp`).
+
+---
+
 ## [v1.2.3] - 2026-10-20
 
 ### Fixed

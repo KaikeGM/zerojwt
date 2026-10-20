@@ -775,6 +775,10 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 // Sign signs a raw JSON payload with the Verifier's configured algorithm
 // (HS256, HS384, HS512, EdDSA, ES256) and appends the complete JWT token
 // ("header.payload.signature") to dst with zero heap allocations (when dst has sufficient capacity).
+//
+// Sign reports failure by returning nil, so callers must check the result: it returns nil when
+// the Verifier cannot sign (see CanSign), when payloadJSON exceeds MaxPayloadSize, or when the
+// signing operation fails. Use NewSigner when you need a typed error.
 func (v *Verifier) Sign(dst []byte, payloadJSON []byte) []byte {
 	return v.SignHS256(dst, payloadJSON)
 }
@@ -796,9 +800,10 @@ func (v *Verifier) SignHS256(dst []byte, payloadJSON []byte) []byte {
 // SignHS256WithScratch signs a raw JSON payload using a caller-supplied Scratch state.
 //
 // It returns nil, never a token with a bogus signature, when the Verifier cannot sign
-// (see CanSign) or when the signing operation fails.
+// (see CanSign), when payloadJSON is longer than the configured MaxPayloadSize (the same
+// Verifier would reject such a token with ErrPayloadTooLarge), or when the signing operation fails.
 func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scratch) []byte {
-	if !v.CanSign() {
+	if !v.CanSign() || len(payloadJSON) > v.maxPayloadSize {
 		return nil
 	}
 	enc := base64.RawURLEncoding
@@ -854,6 +859,9 @@ func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scra
 
 // SignClaims formats a standard JSON payload `{"sub":"...","username":"...","iat":...,"exp":...}`
 // into Scratch and appends the signed JWT token to dst with zero heap allocations.
+//
+// It returns nil when the Verifier cannot sign, when RequireExp is set and exp <= 0, or when
+// the resulting payload exceeds MaxPayloadSize.
 func (v *Verifier) SignClaims(dst []byte, sub, username []byte, iat, exp int64) []byte {
 	if v.requireExp && exp <= 0 {
 		return nil // would produce a token this Verifier rejects with ErrMissingExp

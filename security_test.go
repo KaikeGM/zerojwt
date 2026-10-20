@@ -370,7 +370,7 @@ func TestSecurityHardeningFullCoverage(t *testing.T) {
 	// 1. ES256 signing failure in SignHS256WithScratch
 	validKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	badESPriv := &ecdsa.PrivateKey{PublicKey: validKey.PublicKey, D: validKey.Params().N}
-	vBadES := &Verifier{alg: AlgES256, ecPriv: badESPriv, sigEncodedLen: 86}
+	vBadES := &Verifier{alg: AlgES256, ecPriv: badESPriv, sigEncodedLen: 86, maxPayloadSize: 4096}
 	vBadES.pool.New = func() any { return vBadES.NewScratch() }
 	if tok := vBadES.SignHS256WithScratch(nil, []byte(`{"sub":"1"}`), vBadES.NewScratch()); tok != nil {
 		t.Fatalf("expected nil on invalid ECDSA private key signing, got %v", tok)

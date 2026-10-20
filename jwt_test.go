@@ -178,7 +178,11 @@ func TestVerifyAndSign(t *testing.T) {
 	for i := range bigPayload {
 		bigPayload[i] = 'a'
 	}
-	bigTok := v.SignHS256(nil, append(append([]byte(`{"sub":"1","data":"`), bigPayload...), []byte(`"}`)...))
+	bigData := append(append([]byte(`{"sub":"1","data":"`), bigPayload...), []byte(`"}`)...)
+	if got := v.SignHS256(nil, bigData); got != nil {
+		t.Fatalf("expected nil from SignHS256 for payload exceeding MaxPayloadSize, got %v", got)
+	}
+	bigTok := NewVerifierWithOptions(secret, Options{MaxPayloadSize: 2048}).SignHS256(nil, bigData)
 	if err := v.Verify(bigTok, now, &claims); !errors.Is(err, ErrPayloadTooLarge) {
 		t.Fatalf("expected ErrPayloadTooLarge, got %v", err)
 	}
