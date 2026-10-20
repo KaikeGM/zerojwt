@@ -101,7 +101,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 ## ✨ Key Features
 
 1. **Strict 0 Allocations Guarantee:**
-   - Token signing and verification with HS256/HS384/HS512 and EdDSA operate without heap allocations (`0 B/op, 0 allocs/op`). ES256 still allocates inside `crypto/ecdsa` (measured: ~8 allocs/op verify, ~33 allocs/op sign).
+   - Token signing and verification with HS256/HS384/HS512 and EdDSA operate without heap allocations (`0 B/op, 0 allocs/op`). ES256 still allocates inside `crypto/ecdsa` (varies with Go runtime version: ~8–10 allocs/op verify, ~33–67 allocs/op sign).
    - No `interface{}` unboxing, no `map[string]any` parsing, no reflection (`reflect`).
 
 2. **Complete Cryptographic Algorithm Portfolio:**
@@ -174,7 +174,7 @@ go get github.com/KaikeGM/zerojwt
 
 ### 1. Production Recommended: `NewSecureVerifier`
 
-For production services, prefer `NewSecureVerifier`. It automatically enforces modern identity standards (**OIDC Core 1.0 §3.1.3.7**, **OAuth 2.0 RFC 9068 §2.2.1**, and **RFC 7518 §3.2**):
+For production services, prefer `NewSecureVerifier`. It automatically enforces modern identity standards (**OIDC Core 1.0 §3.1.3.7**, **OAuth 2.0 RFC 9068 §2.2**, and **RFC 7518 §3.2**):
 - **Mandatory Expiration:** Rejects tokens without an `exp` claim (`ErrMissingExp`).
 - **Cryptographic Key Strength:** Enforces minimum HMAC key size ($\ge 32$ bytes for HS256).
 - **Error Handling:** Returns `(*Verifier, error)` at initialization rather than panicking.

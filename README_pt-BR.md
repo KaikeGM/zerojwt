@@ -102,7 +102,7 @@ Todas as quatro bibliotecas são validadas quanto à extração idêntica de cla
 ## ✨ Principais Recursos
 
 1. **Garantia Estrita de 0 Alocações:**
-   - Assinatura e verificação de tokens com HS256/HS384/HS512 e EdDSA operam sem nenhuma alocação na heap (`0 B/op, 0 allocs/op`). O ES256 aloca internamente no pacote padrão `crypto/ecdsa` (medido: ~8 allocs/op na verificação, ~33 allocs/op na assinatura).
+   - Assinatura e verificação de tokens com HS256/HS384/HS512 e EdDSA operam sem nenhuma alocação na heap (`0 B/op, 0 allocs/op`). O ES256 aloca internamente no pacote padrão `crypto/ecdsa` (varia conforme a versão do Go: ~8–10 allocs/op na verificação, ~33–67 allocs/op na assinatura).
    - Sem conversões de `interface{}`, sem parsing com `map[string]any` e sem reflexão (`reflect`).
 
 2. **Portfólio Criptográfico Completo:**
@@ -175,7 +175,7 @@ go get github.com/KaikeGM/zerojwt
 
 ### 1. Recomendado para Produção: `NewSecureVerifier`
 
-Para serviços em produção, utilize preferencialmente `NewSecureVerifier`. Ele aplica automaticamente as exigências modernas de identidade (**OIDC Core 1.0 §3.1.3.7**, **OAuth 2.0 RFC 9068 §2.2.1** e **RFC 7518 §3.2**):
+Para serviços em produção, utilize preferencialmente `NewSecureVerifier`. Ele aplica automaticamente as exigências modernas de identidade (**OIDC Core 1.0 §3.1.3.7**, **OAuth 2.0 RFC 9068 §2.2** e **RFC 7518 §3.2**):
 - **Expiração Obrigatória:** Rejeita qualquer token sem claim `exp` (`ErrMissingExp`).
 - **Tamanho Criptográfico Seguro:** Exige tamanho mínimo de segredo HMAC ($\ge 32$ bytes para HS256).
 - **Tratamento Idiomático:** Retorna `(*Verifier, error)` na inicialização em vez de disparar panic.

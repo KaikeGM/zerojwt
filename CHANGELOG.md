@@ -7,18 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.3.1] - 2026-10-20
+
+### Documentation
+- **Normative Citation Correction:** Corrected RFC 9068 section reference from §2.2.1 to §2.2 ("Data Structure") across godoc (`jwt.go`), `README.md`, `README_pt-BR.md`, and `CHANGELOG.md`.
+- **Top-Level Header Separator Precision:** Clarified that strict RFC 8259 comma and separator enforcement applies specifically to top-level header properties in `validateHeader`.
+- **Claims Asymmetry Clarification:** Documented that `TrySignClaims` reduces issuer/verifier asymmetry by imposing a 256-byte ceiling (`ClaimsLarge` limit); tokens with `sub` between 65B and 256B require `VerifyLarge` as standard `Claims` allocates a 64-byte buffer.
+- **ES256 Allocation Range:** Documented in READMEs that `crypto/ecdsa` allocations vary with Go runtime version (~8–10 allocs/op verify, ~33–67 allocs/op sign).
+
+---
+
 ## [v1.3.0] - 2026-10-20
 
 ### Added
-- **Production Secure Constructors (`NewSecureVerifier`, `NewSecureVerifierWithOptions`, `SecureOptions`):** Added first-class constructors aligned with modern identity standards (OIDC Core 1.0 §3.1.3.7, OAuth 2.0 RFC 9068 §2.2.1, and RFC 7518 §3.2) enforcing `RequireExp: true` and `StrictSecretLength: true` ($\ge 32$ bytes for HS256) with typed error initialization (`(*Verifier, error)`).
+- **Production Secure Constructors (`NewSecureVerifier`, `NewSecureVerifierWithOptions`, `SecureOptions`):** Added first-class constructors aligned with modern identity standards (OIDC Core 1.0 §3.1.3.7, OAuth 2.0 RFC 9068 §2.2, and RFC 7518 §3.2) enforcing `RequireExp: true` and `StrictSecretLength: true` ($\ge 32$ bytes for HS256) with typed error initialization (`(*Verifier, error)`).
 - **Typed Signing APIs (`TrySign`, `TrySignWithScratch`, `TrySignClaims`, `TrySignClaimsWithScratch`):** Added direct signing methods returning `([]byte, error)` with explicit sentinel errors (`ErrPayloadTooLarge`, `ErrMissingExp`, `ErrNoSigningKey`, `ErrSigningFailed`, `ErrInvalidPayload`) while guaranteeing `0 B/op, 0 allocs/op`.
 - **`ErrSigningFailed` Sentinel Error:** Added distinct sentinel error for cryptographic signing failures (differentiating signing runtime failures from verification failures).
 - **RFC 8259 Differential Testing Suite (`scanner_rfc8259_diff_test.go`):** Documented and tested equivalence against standard JSON as well as intentional payload lexer tolerances for maximum streaming performance.
 
 ### Security & Hardening
-- **Strict Pre-Authentication Header Parsing:** Enforced strict RFC 8259 comma and separator syntax in `validateHeader` before signature verification, strictly rejecting missing commas, duplicate commas (`,,`), trailing commas (`,}`), and non-object header structures.
+- **Strict Pre-Authentication Top-Level Header Parsing:** Enforced strict RFC 8259 comma and separator syntax for top-level properties in `validateHeader` before signature verification, strictly rejecting missing commas, duplicate commas (`,,`), trailing commas (`,}`), and non-object header structures.
 - **ECDSA P-256 Private Scalar Mathematical Validation:** Added mathematical verification ($1 \le D < N$) for NIST P-256 private keys in `validateConfig` to reject invalid scalars at initialization.
-- **Claims Boundary Enforcement in `SignClaims`:** Enforced `sub` $\le 256$ bytes (matching `ClaimsLarge` capacity) and `username` $\le 256$ bytes in `TrySignClaims` / `SignClaims`, eliminating issuer/verifier asymmetry on claim sizes.
+- **Claims Boundary Enforcement in `SignClaims`:** Enforced `sub` $\le 256$ bytes (matching `ClaimsLarge` capacity) and `username` $\le 256$ bytes in `TrySignClaims` / `SignClaims`, reducing issuer/verifier asymmetry on claim sizes.
 
 ### Refactored
 - **Single Path of Truth for Signing:** Re-architected `Sign`, `SignWithScratch`, `SignHS256`, `SignHS256WithScratch`, and `SignClaims` as thin wrappers over `TrySign*`, eliminating duplicate code paths and ensuring consistent error guarding across all entry points.

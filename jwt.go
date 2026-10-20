@@ -317,7 +317,7 @@ func NewVerifier(secret []byte) *Verifier {
 }
 
 // SecureOptions returns Options preconfigured with strict production security settings
-// aligning with OIDC Core 1.0 §3.1.3.7, OAuth 2.0 RFC 9068 §2.2.1, and RFC 7518 §3.2:
+// aligning with OIDC Core 1.0 §3.1.3.7, OAuth 2.0 RFC 9068 §2.2, and RFC 7518 §3.2:
 //   - RequireExp: true (rejects tokens without "exp" claim)
 //   - StrictSecretLength: true (enforces minimum HMAC key sizes: 32B for HS256, 48B for HS384, 64B for HS512)
 //
@@ -332,7 +332,7 @@ func SecureOptions() Options {
 }
 
 // NewSecureVerifier creates a new concurrent-safe Verifier preconfigured for production profiles
-// (OIDC Core 1.0 §3.1.3.7, RFC 9068 §2.2.1, RFC 7518 §3.2).
+// (OIDC Core 1.0 §3.1.3.7, RFC 9068 §2.2, RFC 7518 §3.2).
 // It enforces RequireExp: true and StrictSecretLength: true (minimum 32 bytes for HS256).
 // Returns an error wrapping ErrInvalidConfig if the secret is too short or empty.
 func NewSecureVerifier(secret []byte) (*Verifier, error) {

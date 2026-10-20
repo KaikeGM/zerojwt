@@ -10,7 +10,7 @@ import (
 //
 // zerojwt's payload scanner is optimized for extreme throughput (~18M ops/s) and zero memory allocations
 // on cryptographically authenticated tokens. As such, it intentionally tolerates duplicate or omitted
-// commas in payload bodies, whereas unauthenticated headers are strictly validated against RFC 8259 syntax.
+// commas in payload bodies, whereas unauthenticated header top-level separators are strictly validated against RFC 8259 syntax.
 func TestScanner_RFC8259Differential(t *testing.T) {
 	t.Run("EquivalentStandardJSON", func(t *testing.T) {
 		validJSON := []byte(`{"sub":"user_123","iss":"auth.service","roles":"admin","active":true,"count":42}`)
