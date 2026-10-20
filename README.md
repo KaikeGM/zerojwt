@@ -64,7 +64,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 ### 📊 Benchmark Results
 
-*Environment: Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (8 logical CPUs), Linux amd64, Go 1.27 / Go 1.22.*
+*Environment: Intel(R) Core(TM) i5-1135G7 @ 2.40GHz (8 logical CPUs), Linux amd64, Go 1.23+.*
 *Payload: HS256 32-byte secret, standard registered claims (`sub: "12345"`, `iat`, `exp`), plus custom claim (`user: "golden_ember_1"`).*
 
 #### 1. Token Verification (Verify & Parse Claims)
@@ -98,7 +98,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 ## ✨ Key Features
 
 1. **Strict 0 Allocations Guarantee:**
-   - Token signing and verification with HS256/HS384/HS512 and EdDSA operate without heap allocations (`0 B/op, 0 allocs/op`). ES256 still allocates inside `crypto/ecdsa` (measured: ~8 allocs/op verify, ~33 allocs/op sign on Go 1.22).
+   - Token signing and verification with HS256/HS384/HS512 and EdDSA operate without heap allocations (`0 B/op, 0 allocs/op`). ES256 still allocates inside `crypto/ecdsa` (measured: ~8 allocs/op verify, ~33 allocs/op sign).
    - No `interface{}` unboxing, no `map[string]any` parsing, no reflection (`reflect`).
 
 2. **Complete Cryptographic Algorithm Portfolio:**
@@ -159,7 +159,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 ## 📦 Installation
 
-Requires Go 1.20 or higher (Go 1.22+ recommended for optimal PGO):
+Requires Go 1.23 or higher:
 
 ```bash
 go get github.com/KaikeGM/zerojwt
@@ -562,7 +562,7 @@ Destroy must not be called concurrently with other methods.
 
 `zerojwt` includes a factory `default.pgo` optimization profile captured under rigorous load testing.
 
-When building your service with Go 1.20+, the Go compiler automatically discovers `default.pgo` and optimizes register allocation, hot branch predictions, and function inlining:
+When building your service with Go 1.23+, the Go compiler automatically discovers `default.pgo` and optimizes register allocation, hot branch predictions, and function inlining:
 
 ```bash
 # Automatically applies default.pgo
