@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v1.2.3] - 2026-10-20
+
+### Fixed
+- **Deterministic ES256 DER Test Coverage:** Added fixed edge-vector test suite (`es256_der_test.go`) covering all high-bit and leading-zero DER/P1363 branches, eliminating coverage gate flakiness and guaranteeing 100.0% statement coverage across all test runs.
+- **`Destroy()` Changelog Attribution:** Corrected v1.1.0 changelog entry to reflect that `Destroy()` was changed to fail closed rather than introduced.
+
+---
+
 ## [v1.2.2] - 2026-10-20
 
 ### Fixed
-- **Deterministic ES256 DER Test Coverage:** Added fixed edge-vector test suite (`es256_der_test.go`) covering all high-bit and leading-zero DER/P1363 branches, eliminating coverage gate flakiness and ensuring a 100.0% pass rate.
 - **CI Windows Runner Shell Execution:** Resolved syntax failures on `windows-latest` by configuring `defaults: run: shell: bash` across matrix jobs and moving the `gofmt` verification script to the Ubuntu quality gate.
 - **`go.mod` Retract Notice:** Translated retraction comments to English (`Accepted forged tokens (empty HMAC key); fixed in v1.1.0`) for global toolchain visibility.
 - **Documentation Phrasing:** Clarified version requirements to "Go 1.23 or newer" in `README.md` and "Go 1.23 ou superior" in `README_pt-BR.md`.
