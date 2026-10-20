@@ -173,7 +173,12 @@ go get github.com/KaikeGM/zerojwt
 
 ## 🛠️ Início Rápido
 
-### Assinatura e Verificação Básica
+### 1. Recomendado para Produção: `NewSecureVerifier`
+
+Para serviços em produção, utilize preferencialmente `NewSecureVerifier`. Ele aplica automaticamente as exigências modernas de identidade (**OIDC Core 1.0 §3.1.3.7**, **OAuth 2.0 RFC 9068 §2.2.1** e **RFC 7518 §3.2**):
+- **Expiração Obrigatória:** Rejeita qualquer token sem claim `exp` (`ErrMissingExp`).
+- **Tamanho Criptográfico Seguro:** Exige tamanho mínimo de segredo HMAC ($\ge 32$ bytes para HS256).
+- **Tratamento Idiomático:** Retorna `(*Verifier, error)` na inicialização em vez de disparar panic.
 
 ```go
 package main
@@ -187,18 +192,24 @@ import (
 
 func main() {
 	secret := []byte("secret-key-must-be-at-least-32-bytes!!")
-	verifier := zerojwt.NewVerifier(secret)
+	verifier, err := zerojwt.NewSecureVerifier(secret)
+	if err != nil {
+		panic(err)
+	}
 	now := time.Now().Unix()
 
-	// 1. Assina um token em um buffer alocado na stack (0 allocs/op)
+	// 1. Assina claims com retorno tipado de erro (0 allocs/op)
 	var tokBuf [512]byte
-	token := verifier.SignClaims(
+	token, err := verifier.TrySignClaims(
 		tokBuf[:0],
-		[]byte("user_9876"), // sub
+		[]byte("user_9876"), // sub (suporta até 256 bytes)
 		[]byte("kaikegm"),   // username
 		now,                 // iat
 		now+3600,            // exp (1 hora)
 	)
+	if err != nil {
+		panic(err)
+	}
 
 	fmt.Printf("JWT Gerado: %s\n", token)
 
@@ -213,10 +224,20 @@ func main() {
 }
 ```
 
-> [!IMPORTANT]
-> **Boas Práticas para Ambientes de Produção:**
-> 1. **Sempre exija expiração de token:** A RFC 7519 trata a claim `exp` como opcional, de modo que o `Options{}` padrão do `zerojwt` aceita tokens sem expiração se `exp` for omitido. Em APIs em produção, configure `RequireExp: true` em `Options{}` para que qualquer token sem `exp` seja rejeitado imediatamente (`ErrMissingExp`).
-> 2. **Verifique o retorno de `Sign*`:** Os métodos `Sign`, `SignClaims` e `SignWithScratch` reportam falha retornando `nil` (por exemplo, quando o payload excede `MaxPayloadSize`, a chave privada não está configurada ou `RequireExp` é violado). Sempre verifique `if token == nil { ... }`, ou utilize `verifier.NewSigner()` para erros tipados explícitos (`ErrPayloadTooLarge`, etc.).
+### 2. Padrão Genérico RFC 7519: `NewVerifier`
+
+Se a sua arquitetura necessitar de tokens sem timestamp de expiração ou utilizar segredos legados, `NewVerifier` mantém os padrões genéricos da RFC 7519 (`RequireExp: false`, tamanho flexível):
+
+```go
+verifier := zerojwt.NewVerifier(secret)
+token := verifier.SignClaims(tokBuf[:0], []byte("user_1"), nil, now, now+3600)
+```
+
+> [!TIP]
+> **Ergonomia da API e Retorno de Erros:**
+> - **Caminho com Erro Tipado (`TrySign*`):** `TrySign` e `TrySignClaims` retornam `([]byte, error)` com erros sentinela explícitos (`ErrPayloadTooLarge`, `ErrMissingExp`, `ErrNoSigningKey`, `ErrSigningFailed`), mantendo estritos `0 B/op, 0 allocs/op`.
+> - **Caminho Direto de Buffer (`Sign*`):** `Sign` e `SignClaims` retornam `[]byte` diretamente (e `nil` em falha) para loops de eventos de alto throughput.
+> - **Tamanho de Chave HMAC:** `StrictSecretLength` aplica-se aos algoritmos simétricos HMAC (`HS256`, `HS384`, `HS512` conforme RFC 7518 §3.2). Chaves assimétricas (`EdDSA`, `ES256`) possuem dimensões fixadas matematicamente pela curva e validadas na inicialização.
 
 ---
 

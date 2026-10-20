@@ -172,7 +172,12 @@ go get github.com/KaikeGM/zerojwt
 
 ## 🛠️ Quick Start
 
-### Basic Signing and Verification
+### 1. Production Recommended: `NewSecureVerifier`
+
+For production services, prefer `NewSecureVerifier`. It automatically enforces modern identity standards (**OIDC Core 1.0 §3.1.3.7**, **OAuth 2.0 RFC 9068 §2.2.1**, and **RFC 7518 §3.2**):
+- **Mandatory Expiration:** Rejects tokens without an `exp` claim (`ErrMissingExp`).
+- **Cryptographic Key Strength:** Enforces minimum HMAC key size ($\ge 32$ bytes for HS256).
+- **Error Handling:** Returns `(*Verifier, error)` at initialization rather than panicking.
 
 ```go
 package main
@@ -186,18 +191,24 @@ import (
 
 func main() {
 	secret := []byte("secret-key-must-be-at-least-32-bytes!!")
-	verifier := zerojwt.NewVerifier(secret)
+	verifier, err := zerojwt.NewSecureVerifier(secret)
+	if err != nil {
+		panic(err)
+	}
 	now := time.Now().Unix()
 
-	// 1. Sign a token into a stack buffer (0 allocs/op)
+	// 1. Sign claims with typed error handling (0 allocs/op)
 	var tokBuf [512]byte
-	token := verifier.SignClaims(
+	token, err := verifier.TrySignClaims(
 		tokBuf[:0],
-		[]byte("user_9876"), // sub
+		[]byte("user_9876"), // sub (up to 256 bytes)
 		[]byte("kaikegm"),   // username
 		now,                 // iat
 		now+3600,            // exp (1 hour)
 	)
+	if err != nil {
+		panic(err)
+	}
 
 	fmt.Printf("Generated JWT: %s\n", token)
 
@@ -212,10 +223,20 @@ func main() {
 }
 ```
 
-> [!IMPORTANT]
-> **Production Best Practices:**
-> 1. **Always enforce token expiration:** RFC 7519 does not mandate the `exp` claim, so `zerojwt`'s default `Options{}` permits unexpired tokens if `exp` is omitted. For production APIs, configure `RequireExp: true` in `Options{}` so any token lacking `exp` is rejected immediately (`ErrMissingExp`).
-> 2. **Check `Sign*` return value:** `Sign`, `SignClaims`, and `SignWithScratch` report failure by returning `nil` (e.g. when payload size exceeds `MaxPayloadSize`, signing key is missing, or `RequireExp` is violated). Always check `if token == nil { ... }`, or use `verifier.NewSigner()` for explicit typed errors (`ErrPayloadTooLarge`, etc.).
+### 2. Baseline RFC 7519: `NewVerifier`
+
+If your architecture requires tokens without an expiration timestamp or uses legacy keys, `NewVerifier` preserves baseline RFC 7519 defaults (`RequireExp: false`, permissive key size):
+
+```go
+verifier := zerojwt.NewVerifier(secret)
+token := verifier.SignClaims(tokBuf[:0], []byte("user_1"), nil, now, now+3600)
+```
+
+> [!TIP]
+> **API Ergonomics & Error Returns:**
+> - **Typed Error Path (`TrySign*`):** `TrySign` and `TrySignClaims` return `([]byte, error)` with explicit sentinel errors (`ErrPayloadTooLarge`, `ErrMissingExp`, `ErrNoSigningKey`, `ErrSigningFailed`), preserving `0 B/op, 0 allocs/op`.
+> - **Direct Slice Path (`Sign*`):** `Sign` and `SignClaims` return `[]byte` directly (and `nil` on failure) for maximum speed in event-loop environments.
+> - **HMAC Key Lengths:** `StrictSecretLength` applies to symmetric HMAC algorithms (`HS256`, `HS384`, `HS512` per RFC 7518 §3.2). Asymmetric keys (`EdDSA`, `ES256`) have mathematically fixed curve dimensions enforced directly at initialization.
 
 ---
 

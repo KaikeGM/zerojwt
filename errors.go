@@ -50,4 +50,8 @@ var (
 
 	// ErrVerifierDestroyed is returned by Verify* after Verifier.Destroy has been called.
 	ErrVerifierDestroyed = errors.New("zerojwt: verifier has been destroyed")
+
+	// ErrSigningFailed is returned by TrySign* when cryptographic signing fails
+	// (such as an invalid private key scalar or signing primitive failure).
+	ErrSigningFailed = errors.New("zerojwt: cryptographic signing failed")
 )

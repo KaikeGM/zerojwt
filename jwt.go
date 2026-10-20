@@ -309,8 +309,42 @@ type Verifier struct {
 
 // NewVerifier creates a new concurrent-safe HS256 Verifier for the given secret key
 // using the default buffer limits (128B header, 1024B payload).
+//
+// Note: NewVerifier preserves RFC 7519 baseline defaults (RequireExp: false, StrictSecretLength: false).
+// For production environments, prefer NewSecureVerifier.
 func NewVerifier(secret []byte) *Verifier {
 	return NewVerifierWithOptions(secret, Options{Algorithm: AlgHS256})
+}
+
+// SecureOptions returns Options preconfigured with strict production security settings
+// aligning with OIDC Core 1.0 §3.1.3.7, OAuth 2.0 RFC 9068 §2.2.1, and RFC 7518 §3.2:
+//   - RequireExp: true (rejects tokens without "exp" claim)
+//   - StrictSecretLength: true (enforces minimum HMAC key sizes: 32B for HS256, 48B for HS384, 64B for HS512)
+//
+// Note: StrictSecretLength applies to symmetric HMAC algorithms; asymmetric algorithms
+// (EdDSA, ES256) have curve-mandated key sizes enforced directly by mathematical checks.
+func SecureOptions() Options {
+	return Options{
+		Algorithm:          AlgHS256,
+		RequireExp:         true,
+		StrictSecretLength: true,
+	}
+}
+
+// NewSecureVerifier creates a new concurrent-safe Verifier preconfigured for production profiles
+// (OIDC Core 1.0 §3.1.3.7, RFC 9068 §2.2.1, RFC 7518 §3.2).
+// It enforces RequireExp: true and StrictSecretLength: true (minimum 32 bytes for HS256).
+// Returns an error wrapping ErrInvalidConfig if the secret is too short or empty.
+func NewSecureVerifier(secret []byte) (*Verifier, error) {
+	return TryNewVerifier(secret, SecureOptions())
+}
+
+// NewSecureVerifierWithOptions creates a new concurrent-safe Verifier applying RequireExp
+// and StrictSecretLength over the caller-provided Options.
+func NewSecureVerifierWithOptions(secret []byte, opts Options) (*Verifier, error) {
+	opts.RequireExp = true
+	opts.StrictSecretLength = true
+	return TryNewVerifier(secret, opts)
 }
 
 // NewEd25519Verifier creates a new concurrent-safe EdDSA (Ed25519) Verifier.
@@ -532,8 +566,13 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 		} else if pub.Curve != elliptic.P256() {
 			return invalid("ES256 requires a P-256 public key")
 		}
-		if priv != nil && priv.Curve != elliptic.P256() {
-			return invalid("ES256 requires a P-256 private key")
+		if priv != nil {
+			if priv.Curve != elliptic.P256() {
+				return invalid("ES256 requires a P-256 private key")
+			}
+			if priv.D == nil || priv.D.Sign() <= 0 || priv.D.Cmp(priv.Params().N) >= 0 {
+				return invalid("ES256 requires a valid P-256 private key scalar (1 <= D < N)")
+			}
 		}
 	}
 	if opts.Leeway > 0 && opts.Leeway < time.Second {
@@ -772,39 +811,29 @@ func (v *Verifier) VerifyCustom(tok []byte, nowUnix int64, onClaim func(key, val
 	return nil
 }
 
-// Sign signs a raw JSON payload with the Verifier's configured algorithm
+// TrySign signs a raw JSON payload with the Verifier's configured algorithm
 // (HS256, HS384, HS512, EdDSA, ES256) and appends the complete JWT token
 // ("header.payload.signature") to dst with zero heap allocations (when dst has sufficient capacity).
 //
-// Sign reports failure by returning nil, so callers must check the result: it returns nil when
-// the Verifier cannot sign (see CanSign), when payloadJSON exceeds MaxPayloadSize, or when the
-// signing operation fails. Use NewSigner when you need a typed error.
-func (v *Verifier) Sign(dst []byte, payloadJSON []byte) []byte {
-	return v.SignHS256(dst, payloadJSON)
-}
-
-// SignWithScratch signs a raw JSON payload using a caller-supplied Scratch state.
-func (v *Verifier) SignWithScratch(dst []byte, payloadJSON []byte, st *Scratch) []byte {
-	return v.SignHS256WithScratch(dst, payloadJSON, st)
-}
-
-// SignHS256 signs a raw JSON payload and appends the complete JWT token
-// ("header.payload.signature") to dst with zero heap allocations (when dst has sufficient capacity).
-func (v *Verifier) SignHS256(dst []byte, payloadJSON []byte) []byte {
+// If signing fails, it returns nil and a typed error (ErrVerifierDestroyed, ErrNoSigningKey,
+// ErrPayloadTooLarge, or ErrSigningFailed), leaving dst unmodified.
+func (v *Verifier) TrySign(dst []byte, payloadJSON []byte) ([]byte, error) {
 	st := v.pool.Get().(*Scratch)
-	res := v.SignHS256WithScratch(dst, payloadJSON, st)
+	res, err := v.TrySignWithScratch(dst, payloadJSON, st)
 	v.releaseScratch(st)
-	return res
+	return res, err
 }
 
-// SignHS256WithScratch signs a raw JSON payload using a caller-supplied Scratch state.
-//
-// It returns nil, never a token with a bogus signature, when the Verifier cannot sign
-// (see CanSign), when payloadJSON is longer than the configured MaxPayloadSize (the same
-// Verifier would reject such a token with ErrPayloadTooLarge), or when the signing operation fails.
-func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scratch) []byte {
-	if !v.CanSign() || len(payloadJSON) > v.maxPayloadSize {
-		return nil
+// TrySignWithScratch is identical to TrySign but uses a caller-supplied Scratch state.
+func (v *Verifier) TrySignWithScratch(dst []byte, payloadJSON []byte, st *Scratch) ([]byte, error) {
+	if v.destroyed.Load() {
+		return nil, ErrVerifierDestroyed
+	}
+	if !v.CanSign() {
+		return nil, ErrNoSigningKey
+	}
+	if len(payloadJSON) > v.maxPayloadSize {
+		return nil, ErrPayloadTooLarge
 	}
 	enc := base64.RawURLEncoding
 	start := len(dst)
@@ -839,7 +868,7 @@ func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scra
 		digest := sha256.Sum256(signingInput)
 		asn1Sig, err := ecdsa.SignASN1(rand.Reader, v.ecPriv, digest[:])
 		if err != nil || !decodeDERToP1363(asn1Sig, st.sumBuf[:64]) {
-			return nil
+			return nil, ErrSigningFailed
 		}
 		sig = st.sumBuf[:64]
 	default:
@@ -854,19 +883,71 @@ func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scra
 	dst = dst[:sigStart+v.sigEncodedLen]
 	enc.Encode(dst[sigStart:], sig)
 
-	return dst
+	return dst, nil
 }
 
-// SignClaims formats a standard JSON payload `{"sub":"...","username":"...","iat":...,"exp":...}`
+// Sign signs a raw JSON payload with the Verifier's configured algorithm
+// (HS256, HS384, HS512, EdDSA, ES256) and appends the complete JWT token
+// ("header.payload.signature") to dst with zero heap allocations (when dst has sufficient capacity).
+//
+// Sign reports failure by returning nil: see TrySign for typed errors.
+func (v *Verifier) Sign(dst []byte, payloadJSON []byte) []byte {
+	tok, _ := v.TrySign(dst, payloadJSON)
+	return tok
+}
+
+// SignWithScratch signs a raw JSON payload using a caller-supplied Scratch state.
+// It reports failure by returning nil: see TrySignWithScratch for typed errors.
+func (v *Verifier) SignWithScratch(dst []byte, payloadJSON []byte, st *Scratch) []byte {
+	tok, _ := v.TrySignWithScratch(dst, payloadJSON, st)
+	return tok
+}
+
+// SignHS256 signs a raw JSON payload and appends the complete JWT token
+// ("header.payload.signature") to dst with zero heap allocations (when dst has sufficient capacity).
+// It reports failure by returning nil: see TrySign for typed errors.
+func (v *Verifier) SignHS256(dst []byte, payloadJSON []byte) []byte {
+	return v.Sign(dst, payloadJSON)
+}
+
+// SignHS256WithScratch signs a raw JSON payload using a caller-supplied Scratch state.
+// It reports failure by returning nil: see TrySignWithScratch for typed errors.
+func (v *Verifier) SignHS256WithScratch(dst []byte, payloadJSON []byte, st *Scratch) []byte {
+	return v.SignWithScratch(dst, payloadJSON, st)
+}
+
+// TrySignClaims formats a standard JSON payload `{"sub":"...","username":"...","iat":...,"exp":...}`
 // into Scratch and appends the signed JWT token to dst with zero heap allocations.
 //
-// It returns nil when the Verifier cannot sign, when RequireExp is set and exp <= 0, or when
-// the resulting payload exceeds MaxPayloadSize.
-func (v *Verifier) SignClaims(dst []byte, sub, username []byte, iat, exp int64) []byte {
-	if v.requireExp && exp <= 0 {
-		return nil // would produce a token this Verifier rejects with ErrMissingExp
-	}
+// It returns a typed error if the Verifier cannot sign, if RequireExp is set and exp <= 0,
+// if sub is empty or exceeds 256 bytes (ClaimsLarge capacity limit), if username exceeds
+// 256 bytes, or if the resulting payload exceeds MaxPayloadSize.
+// (Note: standard Claims struct supports sub <= 64 bytes and username <= 128 bytes via Verify;
+// callers verifying into standard Claims should remain within those bounds or use VerifyLarge).
+func (v *Verifier) TrySignClaims(dst []byte, sub, username []byte, iat, exp int64) ([]byte, error) {
 	st := v.pool.Get().(*Scratch)
+	res, err := v.TrySignClaimsWithScratch(dst, sub, username, iat, exp, st)
+	v.releaseScratch(st)
+	return res, err
+}
+
+// TrySignClaimsWithScratch is identical to TrySignClaims but uses caller-supplied Scratch state.
+func (v *Verifier) TrySignClaimsWithScratch(dst []byte, sub, username []byte, iat, exp int64, st *Scratch) ([]byte, error) {
+	if v.destroyed.Load() {
+		return nil, ErrVerifierDestroyed
+	}
+	if !v.CanSign() {
+		return nil, ErrNoSigningKey
+	}
+	if v.requireExp && exp <= 0 {
+		return nil, ErrMissingExp
+	}
+	if len(sub) == 0 || len(sub) > 256 {
+		return nil, ErrInvalidPayload
+	}
+	if len(username) > 256 {
+		return nil, ErrInvalidPayload
+	}
 	b := st.payloadBuf[:0]
 	b = append(b, `{"sub":`...)
 	b = AppendEscapedJSONString(b, sub)
@@ -892,9 +973,16 @@ func (v *Verifier) SignClaims(dst []byte, sub, username []byte, iat, exp int64) 
 	}
 	b = append(b, '}')
 
-	res := v.SignHS256WithScratch(dst, b, st)
-	v.releaseScratch(st)
-	return res
+	return v.TrySignWithScratch(dst, b, st)
+}
+
+// SignClaims formats a standard JSON payload `{"sub":"...","username":"...","iat":...,"exp":...}`
+// into Scratch and appends the signed JWT token to dst with zero heap allocations.
+//
+// It returns nil on any failure condition (see TrySignClaims for typed errors).
+func (v *Verifier) SignClaims(dst []byte, sub, username []byte, iat, exp int64) []byte {
+	tok, _ := v.TrySignClaims(dst, sub, username, iat, exp)
+	return tok
 }
 
 func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]byte, error) {
@@ -1005,7 +1093,23 @@ func (v *Verifier) validateHeader(h []byte) (int, error) {
 	hasTyp := false
 	hasKid := false
 	keyIdx := -1
+	first := true
 	for len(body) > 0 {
+		if first {
+			if body[0] != '"' {
+				return -1, ErrInvalidHeader
+			}
+			first = false
+		} else {
+			if body[0] != ',' {
+				return -1, ErrInvalidHeader
+			}
+			afterComma := bytes.TrimSpace(body[1:])
+			if len(afterComma) == 0 || afterComma[0] != '"' {
+				return -1, ErrInvalidHeader
+			}
+			body = afterComma
+		}
 		key, val, isStr, rest, ok := NextJSONProp(body)
 		if !ok {
 			return -1, ErrInvalidHeader

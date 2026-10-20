@@ -161,9 +161,5 @@ func (b *SignBuilder) Sign() ([]byte, error) {
 		return nil, ErrMissingExp
 	}
 	b.buf = append(b.buf, '}')
-	tok := b.v.SignHS256WithScratch(b.dst, b.buf, b.st)
-	if tok == nil {
-		return nil, ErrNoSigningKey
-	}
-	return tok, nil
+	return b.v.TrySignWithScratch(b.dst, b.buf, b.st)
 }
