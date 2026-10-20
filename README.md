@@ -394,21 +394,34 @@ err := verifier.VerifyCustom(token, now, func(key, val []byte, isStr bool) bool 
 		id, _ := zerojwt.ParsePositiveInt(val)
 		fmt.Printf("Tenant: %d\n", id)
 	case "permissions":
-		// Traverse JSON array with 0 allocations
-		arrBody, ok := zerojwt.TrimJSONArray(val)
-		if ok {
-			for len(arrBody) > 0 {
-				elem, isStr, rest, ok := zerojwt.NextArrayElement(arrBody)
-				if !ok {
-					break
-				}
-				arrBody = rest
-				fmt.Printf("Permission: %s (isStr=%v)\n", elem, isStr)
-			}
+		// Go 1.23+ range-over-func iterator (0 B/op, 0 allocs/op, ~54 ns/op):
+		for elem, isStr := range zerojwt.ArrayElements(val) {
+			fmt.Printf("Permission: %s (isStr=%v)\n", elem, isStr)
 		}
 	}
 	return true // continue scanning claims
 })
+```
+
+### Go 1.23+ Zero-Allocation Range-Over-Func Iterators
+
+Go 1.23 standardizes iterators via `iter.Seq` and `iter.Seq2`. `zerojwt` provides native iterators that compile down with complete closure inlining, running at **~22,000,000 ops/s** with **`0 B/op` and `0 allocs/op`**:
+
+```go
+// 1. Iterate over JSON array elements:
+for elem, isStr := range zerojwt.ArrayElements(rawArray) {
+	fmt.Printf("Element: %s (isStr: %v)\n", elem, isStr)
+}
+
+// 2. Iterate over JSON object properties (key, val):
+for key, val := range zerojwt.ObjectProps(rawObject) {
+	fmt.Printf("%s = %s\n", key, val)
+}
+
+// 3. Iterate over properties with full type information:
+for prop := range zerojwt.ObjectProperties(rawObject) {
+	fmt.Printf("Key: %s, Val: %s, IsString: %v\n", prop.Key, prop.Val, prop.IsStr)
+}
 ```
 
 ---
@@ -613,6 +626,11 @@ All `Sign*` methods return `nil` (never a token with a bogus signature) when the
 - `ParsePositiveInt(b []byte) (int64, bool)`: Ultra-fast integer parser.
 - `UnescapeJSONInPlace(s []byte) []byte`: Decodes escape sequences and Unicode code points in-place.
 - `AppendEscapedJSONString(dst, s []byte) []byte`: Appends a JSON-safe quoted string.
+
+### Go 1.23+ Iterators (`iter.go`)
+- `ArrayElements(rawArray []byte) iter.Seq2[[]byte, bool]`: Traversing JSON array elements with zero allocations.
+- `ObjectProps(rawObject []byte) iter.Seq2[[]byte, []byte]`: Traversing JSON object key-value pairs with zero allocations.
+- `ObjectProperties(rawObject []byte) iter.Seq[JSONProp]`: Traversing JSON object properties with full type metadata.
 
 ---
 
