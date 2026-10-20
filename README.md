@@ -1,5 +1,7 @@
 # ⚡ `zerojwt` — Ultra-Fast, Zero-Allocation Industrial JWT for Go
 
+**English** | [Português](README_pt-BR.md)
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/KaikeGM/zerojwt.svg)](https://pkg.go.dev/github.com/KaikeGM/zerojwt)
 [![Go Report Card](https://goreportcard.com/badge/github.com/KaikeGM/zerojwt)](https://goreportcard.com/report/github.com/KaikeGM/zerojwt)
 [![Coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen.svg)](https://github.com/KaikeGM/zerojwt)
