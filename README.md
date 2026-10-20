@@ -161,7 +161,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 ## 📦 Installation
 
-Requires Go 1.23 to 1.27+:
+Requires Go 1.23 or newer:
 
 ```bash
 go get github.com/KaikeGM/zerojwt

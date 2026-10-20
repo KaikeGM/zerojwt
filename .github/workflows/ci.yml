@@ -18,6 +18,9 @@ jobs:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
         go-version: [ '1.23.x', '1.24.x', '1.25.x', '1.26.x', '1.27.x' ]
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout repository
@@ -28,14 +31,8 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Verify Code Formatting (gofmt)
-        run: |
-          UNFORMATTED=$(gofmt -l .)
-          if [ -n "$UNFORMATTED" ]; then
-            echo "The following files are not formatted with gofmt:"
-            echo "$UNFORMATTED"
-            exit 1
-          fi
+      - name: Run Static Analysis (go vet)
+        run: go vet ./...
 
       - name: Enforce Strict Zero Heap Allocations (0 B/op, 0 allocs/op)
         run: go test -v -run=TestZeroAllocations ./...
@@ -66,7 +63,7 @@ jobs:
             bash -c "go test -v ./... && go test -v -run=TestZeroAllocations ./..."
 
   coverage:
-    name: Verify 100% Statement Coverage
+    name: Code Quality & 100% Statement Coverage
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -76,6 +73,17 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.x'
+
+      - name: Verify Code Formatting (gofmt)
+        shell: bash
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "The following files are not formatted with gofmt:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+          echo "SUCCESS: All Go source files adhere to gofmt formatting standards."
 
       - name: Run Coverage Analysis
         run: go test -v -coverprofile=coverage.out ./...

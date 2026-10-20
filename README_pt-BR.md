@@ -162,7 +162,7 @@ O `zerojwt` atinge zero alocações na heap substituindo alocações dinâmicas 
 
 ## 📦 Instalação
 
-Requer Go 1.23 a 1.27+:
+Requer Go 1.23 ou superior:
 
 ```bash
 go get github.com/KaikeGM/zerojwt
