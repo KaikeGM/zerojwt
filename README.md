@@ -72,7 +72,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 #### 1. Token Verification (Verify & Parse Claims)
 
-| Library | Mode / Strategy | Throughput ($10^9 / \text{ns}$) | Avg Time / op | Memory / op | Allocs / op |
+| Library | Mode / Strategy | Throughput (ops/s = 1e9/ns) | Avg Time / op | Memory / op | Allocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **`zerojwt`** | **Parallel (Multi-Core)** | **~4,750,000 ops/s** | **210.5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
 | **`zerojwt`** | **Single-Core (Scratch)** | **~1,387,000 ops/s** | **720.9 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
@@ -86,7 +86,7 @@ All four libraries are verified for identical claim extraction and cryptographic
 
 #### 2. Token Generation (Signing)
 
-| Library | Implementation | Throughput ($10^9 / \text{ns}$) | Avg Time / op | Memory / op | Allocs / op |
+| Library | Implementation | Throughput (ops/s = 1e9/ns) | Avg Time / op | Memory / op | Allocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **`zerojwt`** | **`SignClaims`** | **~2,300,000 ops/s** | **434.7 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
 | **`zerojwt`** | **`SignBuilder`** | **~2,083,000 ops/s** | **480.0 ns/op** | **`0 B/op`** | **`0 allocs/op`** |

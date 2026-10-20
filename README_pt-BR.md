@@ -73,7 +73,7 @@ Todas as quatro bibliotecas são validadas quanto à extração idêntica de cla
 
 #### 1. Verificação de Token (Verify & Parse Claims)
 
-| Biblioteca | Modo / Estratégia | Vazão ($10^9 / \text{ns}$) | Tempo Médio / op | Memória / op | Alocs / op |
+| Biblioteca | Modo / Estratégia | Vazão (ops/s = 1e9/ns) | Tempo Médio / op | Memória / op | Alocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **`zerojwt`** | **Paralelo (Multi-Core)** | **~4.750.000 ops/s** | **210,5 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
 | **`zerojwt`** | **Single-Core (Scratch)** | **~1.387.000 ops/s** | **720,9 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
@@ -87,7 +87,7 @@ Todas as quatro bibliotecas são validadas quanto à extração idêntica de cla
 
 #### 2. Geração de Token (Assinatura)
 
-| Biblioteca | Implementação | Vazão ($10^9 / \text{ns}$) | Tempo Médio / op | Memória / op | Alocs / op |
+| Biblioteca | Implementação | Vazão (ops/s = 1e9/ns) | Tempo Médio / op | Memória / op | Alocs / op |
 | :--- | :--- | :---: | :---: | :---: | :---: |
 | **`zerojwt`** | **`SignClaims`** | **~2.300.000 ops/s** | **434,7 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
 | **`zerojwt`** | **`SignBuilder`** | **~2.083.000 ops/s** | **480,0 ns/op** | **`0 B/op`** | **`0 allocs/op`** |
