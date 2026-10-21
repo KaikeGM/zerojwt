@@ -55,7 +55,6 @@ func (p JSONProp) Value() []byte { return p.Val }
 // IsString returns true if the JSON property value is a quoted string (ergonomic alias for IsStr).
 func (p JSONProp) IsString() bool { return p.IsStr }
 
-
 // NextJSONProp extracts the next top-level "key": value pair from a JSON object body (inside '{' and '}').
 // It operates strictly in-place on b with zero heap allocations (0 B/op, 0 allocs/op).
 func NextJSONProp(b []byte) (key, val []byte, isStr bool, rest []byte, ok bool) {

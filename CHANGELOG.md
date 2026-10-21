@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.2] - 2026-10-21
+
+### Style & CI
+- **Code Formatting (`v2/scanner.go`):** Aligned `v2/scanner.go` with standard `gofmt` to satisfy strict CI formatting quality gates.
+
+---
+
 ## [v2.0.1] - 2026-10-21
 
 ### Security & Hardening
