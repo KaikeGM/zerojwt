@@ -12,6 +12,9 @@
 
 Nascido a partir do **PR #48 (`go-gnet-kaikegm`)** no desafio *The $12 Server Challenge* — onde uma única thread do sistema operacional sustentou **300.000 conexões simultâneas keep-alive** e **35.577 req/s** —, o `zerojwt` elimina o uso de reflexão (`reflect`), alocações dinâmicas de mapas via `encoding/json` e a pressão sobre o Garbage Collector (GC) típica de bibliotecas convencionais de JWT em Go, mantendo um conjunto completo de recursos de padrão industrial.
 
+> [!TIP]
+> **Procurando pelo `zerojwt v2`?** Conheça o [`github.com/KaikeGM/zerojwt/v2`](./v2) com claims unificadas de 1016 bytes (OIDC Core §2), construtor seguro por padrão, iteração atômica (`iter.Seq2`) e primitivas de rede para arquiteturas orientadas a eventos (`VerifySplit`, `WorkerScratchGroup`, `SignToIOV`). Veja também o exemplo prático em [`examples/gnet`](./examples/gnet)!
+
 ---
 
 ## 📑 Sumário

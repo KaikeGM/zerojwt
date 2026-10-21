@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0] - 2026-10-21
+
+### Added
+- **Dedicated Major Module (`github.com/KaikeGM/zerojwt/v2`):** Isolated v2 module under `v2/go.mod` maintaining backward compatibility for v1 while eliminating legacy dual-API debt.
+- **Single Unified `Claims` Struct (1016 Bytes):** Replaces `Claims` and `ClaimsLarge` with a unified struct conforming strictly to OIDC Core 1.0 §2 (`sub` expanded to 256 bytes, supporting up to 255 ASCII characters). 8-byte CPU word alignment guarantees `0 B/op, 0 allocs/op` on all HS256 and Ed25519 verification paths.
+- **Secure-by-Default Constructor (`New(secret, ...Options)`):** Strictly secure out of the box per RFC 7518 §3.2 (rejects short secrets with `ErrInsecureSecret`) and OIDC Core 1.0 §3.1.3.7 / RFC 9068 §2.2 (rejects tokens missing `exp` with `ErrMissingExp`). Legacy migration flags `AllowShortSecret` and `AllowMissingExp` provided.
+- **Keypair Cross-Validation at Initialization:** `NewEd25519Verifier` and `NewES256Verifier` cryptographically validate that public and private keys match at boot with `ErrMismatchedKeyPair`, and enforce scalar bounds $1 \le D < N$ per RFC 7518 §3.4.
+- **Idiomatic Append Signing with Zero-Alloc Rollback:** `Sign`, `SignClaims`, and `SignBuilder` return `([]byte, error)` following Go's `append` idiom, automatically rolling back `dst` to its initial length upon failure without partial output corruption.
+- **Generic `AppendEscapedJSON[S ~string | ~[]byte]`:** Format dynamic user strings and byte slices (e.g. 36-byte UUIDs) into JSON payloads with zero heap allocations.
+- **Atomic Verification Iterator (`Iter`):** Leverages Go 1.23 standard `iter.Seq2[JSONProp, error]`. Guarantees atomic verification: claims are yielded if and only if the token is 100% cryptographically verified and structurally valid.
+- **Event-Driven Network Primitives (`gnet`, `evio`, `epoll`):**
+  - **`VerifySplit` / `VerifySplitWithScratch`:** Validates tokens fragmented across non-contiguous circular ring buffers (`head` + `tail`) with 0 heap allocations via 4-byte stack quantum seam stitching and direct HMAC streaming (~11.3 ns delta).
+  - **`WorkerScratchGroup` & `PaddedScratch`:** Worker-pinned workspace array with 64-byte CPU cache-line padding, eliminating `sync.Pool` CAS lock contention and L1/L2 cache false sharing (~158.4 ns/op parallel verification).
+  - **`SignToIOV` / `SignClaimsToIOV`:** Vectorized scatter/gather signing for `unix.Writev` / `gnet.Conn.Writev` via stack `*[2][]byte`, bypassing the 37-byte header copy.
+- **Runnable `gnet` Gateway Sample (`examples/gnet/`):** Full end-to-end event-driven TCP authentication gateway demonstrating `WorkerScratchGroup`, `VerifySplit`, and `SignToIOV` with 10 concurrent clients under race detection.
+- **Profile-Guided Optimization Profile (`v2/default.pgo`):** Generated from intensive microbenchmarks to enable aggressive compiler inlining across new hot paths.
+
+### Changed
+- **Breaking:** Module path changed to `github.com/KaikeGM/zerojwt/v2`.
+- **Breaking:** `NewVerifier` replaced by `zerojwt.New(secret, ...Options)`.
+- **Breaking:** `ClaimsLarge` removed and consolidated into unified `Claims`.
+- **Breaking:** `Sign` signature updated to `Sign(dst, pl) ([]byte, error)`.
+- **Breaking:** Expiration (`exp`) claim is now required by default (opt-out via `Options{AllowMissingExp: true}`).
+
+---
+
 ## [v1.3.1] - 2026-10-20
 
 ### Documentation

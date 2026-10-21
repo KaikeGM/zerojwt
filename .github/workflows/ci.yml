@@ -32,16 +32,24 @@ jobs:
           go-version: ${{ matrix.go-version }}
 
       - name: Run Static Analysis (go vet)
-        run: go vet ./...
+        run: |
+          go vet ./...
+          (cd v2 && go vet ./...)
 
       - name: Enforce Strict Zero Heap Allocations (0 B/op, 0 allocs/op)
-        run: go test -v -run=TestZeroAllocations ./...
+        run: |
+          go test -v -run=TestZeroAllocations ./...
+          (cd v2 && go test -v -run=TestZeroAllocations ./...)
 
       - name: Run Full Test Suite & Race Detector
-        run: go test -v -race ./...
+        run: |
+          go test -v -race ./...
+          (cd v2 && go test -v -race ./...)
 
       - name: Run Zero-Alloc Benchmarks
-        run: go test -bench=. -benchmem ./...
+        run: |
+          go test -bench=. -benchmem ./...
+          (cd v2 && go test -bench=. -benchmem ./...)
 
   test-linux-arm64:
     name: Test (Linux arm64, Go 1.23)
@@ -60,7 +68,7 @@ jobs:
             -v "$PWD":/app \
             -w /app \
             golang:1.27 \
-            bash -c "go test -v ./... && go test -v -run=TestZeroAllocations ./..."
+            bash -c "go test -v ./... && (cd v2 && go test -v ./...) && go test -v -run=TestZeroAllocations ./... && (cd v2 && go test -v -run=TestZeroAllocations ./...)"
 
   coverage:
     name: Code Quality & 100% Statement Coverage
@@ -85,26 +93,41 @@ jobs:
           fi
           echo "SUCCESS: All Go source files adhere to gofmt formatting standards."
 
-      - name: Run Coverage Analysis
-        run: go test -v -coverprofile=coverage.out ./...
+      - name: Run Coverage Analysis (Root v1)
+        run: go test -v -coverprofile=coverage_v1.out ./...
 
-      - name: Display Coverage Breakdown
-        run: go tool cover -func=coverage.out
-
-      - name: Enforce 100.0% Coverage Threshold
+      - name: Enforce 100.0% Coverage Threshold (Root v1)
         shell: bash
         run: |
-          TOTAL_COV=$(go tool cover -func=coverage.out | grep "total:" | awk '{print $3}')
-          echo "Total Statement Coverage: $TOTAL_COV"
+          TOTAL_COV=$(go tool cover -func=coverage_v1.out | grep "total:" | awk '{print $3}')
+          echo "Total Statement Coverage (v1): $TOTAL_COV"
           if [ "$TOTAL_COV" != "100.0%" ]; then
-            echo "ERROR: Code coverage dropped below 100.0%! Found: $TOTAL_COV"
+            echo "ERROR: Code coverage dropped below 100.0% on v1! Found: $TOTAL_COV"
             exit 1
           fi
-          echo "SUCCESS: Code coverage is exactly 100.0% across all statements."
+          echo "SUCCESS: Code coverage is exactly 100.0% across all statements on v1."
 
-      - name: Upload Coverage Profile
+      - name: Run Coverage Analysis (Module v2)
+        working-directory: ./v2
+        run: go test -v -coverprofile=coverage_v2.out ./...
+
+      - name: Enforce 100.0% Coverage Threshold (Module v2)
+        shell: bash
+        working-directory: ./v2
+        run: |
+          TOTAL_COV=$(go tool cover -func=coverage_v2.out | grep "total:" | awk '{print $3}')
+          echo "Total Statement Coverage (v2): $TOTAL_COV"
+          if [ "$TOTAL_COV" != "100.0%" ]; then
+            echo "ERROR: Code coverage dropped below 100.0% on v2! Found: $TOTAL_COV"
+            exit 1
+          fi
+          echo "SUCCESS: Code coverage is exactly 100.0% across all statements on v2."
+
+      - name: Upload Coverage Profiles
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: coverage.out
+          name: coverage-reports
+          path: |
+            coverage_v1.out
+            v2/coverage_v2.out
           retention-days: 14

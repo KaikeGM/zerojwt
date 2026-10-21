@@ -1,6 +1,10 @@
 # Test artifacts and coverage profiles
 *.out
+*/*.out
+**/*.out
 *.test
+*/*.test
+**/*.test
 coverage.out
 *.prof
 
@@ -10,3 +14,6 @@ coverage.out
 .vscode/
 *.swp
 *~
+
+# Compiled binaries
+examples/gnet/gnet

@@ -6,6 +6,7 @@ Only the latest release of `zerojwt` receives security updates.
 
 | Version | Supported          |
 | ------- | ------------------ |
+| 2.0.x   | :white_check_mark: |
 | 1.3.x   | :white_check_mark: |
 | < 1.3.0 | :x:                |
 
