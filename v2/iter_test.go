@@ -277,3 +277,158 @@ func TestAtomicVerificationAndIteration(t *testing.T) {
 		t.Fatalf("SECURITY VIOLATION: callback was called %d times for future nbf!", calls)
 	}
 }
+
+func TestIterSplitAndVerifySplitAndIterate(t *testing.T) {
+	secret := bytes.Repeat([]byte("s"), 32)
+	v, err := zerojwt.New(secret, zerojwt.Options{
+		ExpectedIssuer:   "auth.zerojwt.io",
+		ExpectedAudience: "api.zerojwt.io",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().Unix()
+	b := v.NewSigner(nil)
+	b.SetSubject("split_user")
+	b.SetIssuer("auth.zerojwt.io")
+	b.SetAudience("api.zerojwt.io")
+	b.SetExpiresAt(now + 3600)
+	b.SetClaimString("role", "admin")
+	b.SetClaimInt("uid", 1001)
+	tok, err := b.Sign()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Split across middle
+	mid := len(tok) / 2
+	head := tok[:mid]
+	tail := tok[mid:]
+
+	// 1. VerifySplitAndIterate
+	claimsMap := make(map[string]string)
+	err = v.VerifySplitAndIterate(head, tail, now, func(key, val []byte, isStr bool) bool {
+		claimsMap[string(key)] = string(val)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("VerifySplitAndIterate failed: %v", err)
+	}
+	if claimsMap["sub"] != "split_user" || claimsMap["role"] != "admin" || claimsMap["uid"] != "1001" {
+		t.Fatalf("claims mismatch: %+v", claimsMap)
+	}
+
+	// Early break in VerifySplitAndIterate
+	earlyCount := 0
+	_ = v.VerifySplitAndIterate(head, tail, now, func(key, val []byte, isStr bool) bool {
+		earlyCount++
+		return false
+	})
+	if earlyCount != 1 {
+		t.Fatalf("expected early break at count 1, got %d", earlyCount)
+	}
+
+	// Empty head fallback to single buffer
+	claimsMapEmptyHead := make(map[string]string)
+	err = v.VerifySplitAndIterate(nil, tok, now, func(key, val []byte, isStr bool) bool {
+		claimsMapEmptyHead[string(key)] = string(val)
+		return true
+	})
+	if err != nil || claimsMapEmptyHead["sub"] != "split_user" {
+		t.Fatalf("VerifySplitAndIterate with empty head failed: %v", err)
+	}
+
+	// Empty tail fallback to single buffer
+	claimsMapEmptyTail := make(map[string]string)
+	err = v.VerifySplitAndIterate(tok, nil, now, func(key, val []byte, isStr bool) bool {
+		claimsMapEmptyTail[string(key)] = string(val)
+		return true
+	})
+	if err != nil || claimsMapEmptyTail["sub"] != "split_user" {
+		t.Fatalf("VerifySplitAndIterate with empty tail failed: %v", err)
+	}
+
+	// 2. IterSplit
+	scratch := v.NewScratch()
+	iterMap := make(map[string]string)
+	for prop, err := range v.IterSplitWithScratch(head, tail, now, scratch) {
+		if err != nil {
+			t.Fatalf("IterSplitWithScratch unexpected error: %v", err)
+		}
+		iterMap[string(prop.Key)] = string(prop.Val)
+	}
+	if iterMap["sub"] != "split_user" || iterMap["role"] != "admin" {
+		t.Fatalf("IterSplit claims mismatch: %+v", iterMap)
+	}
+
+	// IterSplit empty head / empty tail
+	for prop, err := range v.IterSplit(nil, tok, now) {
+		if err != nil || string(prop.Key) == "" {
+			t.Fatalf("IterSplit nil head failed: %v", err)
+		}
+	}
+	for prop, err := range v.IterSplit(tok, nil, now) {
+		if err != nil || string(prop.Key) == "" {
+			t.Fatalf("IterSplit nil tail failed: %v", err)
+		}
+	}
+
+	// Early break in IterSplit
+	breakCount := 0
+	for _, err := range v.IterSplit(head, tail, now) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		breakCount++
+		break
+	}
+	if breakCount != 1 {
+		t.Fatalf("expected 1 break iteration, got %d", breakCount)
+	}
+
+	// 3. Error Cases & Atomicity in Split Iteration
+	// Corrupted signature
+	badTail := append([]byte(nil), tail...)
+	badTail[len(badTail)-2] ^= 0xFF
+	for _, itErr := range v.IterSplit(head, badTail, now) {
+		if !errors.Is(itErr, zerojwt.ErrInvalidSignature) {
+			t.Fatalf("expected ErrInvalidSignature, got %v", itErr)
+		}
+	}
+	if err := v.VerifySplitAndIterate(head, badTail, now, nil); !errors.Is(err, zerojwt.ErrInvalidSignature) {
+		t.Fatalf("expected ErrInvalidSignature in VerifySplitAndIterate, got %v", err)
+	}
+
+	// Expired split token
+	bExp := v.NewSigner(nil)
+	bExp.SetSubject("victim")
+	bExp.SetIssuer("auth.zerojwt.io")
+	bExp.SetAudience("api.zerojwt.io")
+	bExp.SetExpiresAt(now - 10)
+	expTok, _ := bExp.Sign()
+	expHead, expTail := expTok[:len(expTok)/2], expTok[len(expTok)/2:]
+	for _, itErr := range v.IterSplit(expHead, expTail, now) {
+		if !errors.Is(itErr, zerojwt.ErrTokenExpired) {
+			t.Fatalf("expected ErrTokenExpired in IterSplit, got %v", itErr)
+		}
+	}
+	if err := v.VerifySplitAndIterate(expHead, expTail, now, nil); !errors.Is(err, zerojwt.ErrTokenExpired) {
+		t.Fatalf("expected ErrTokenExpired in VerifySplitAndIterate, got %v", err)
+	}
+
+	// Malformed JSON payload in split token
+	malformedTok, err := v.Sign(nil, []byte(`not_json`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mHead, mTail := malformedTok[:len(malformedTok)/2], malformedTok[len(malformedTok)/2:]
+	for _, itErr := range v.IterSplit(mHead, mTail, now) {
+		if !errors.Is(itErr, zerojwt.ErrInvalidPayload) {
+			t.Fatalf("expected ErrInvalidPayload in IterSplit for malformed JSON, got %v", itErr)
+		}
+	}
+	if err := v.VerifySplitAndIterate(mHead, mTail, now, nil); !errors.Is(err, zerojwt.ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload in VerifySplitAndIterate for malformed JSON, got %v", err)
+	}
+}

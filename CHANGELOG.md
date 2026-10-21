@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.1.0] - 2026-10-21
+
+### Added
+- **Ring-Buffer Range-Over-Func Iterators (`IterSplit` / `VerifySplitAndIterate`):**
+  - `VerifySplitAndIterate(head, tail, now, seq)`: atomically verifies fragmented tokens across circular ring buffers (`gnet`, `evio`, `epoll`) and yields key-value JSON claims via Go 1.23 `iter.Seq2[JSONProp, error]` with 0 heap allocations.
+  - `IterSplit(head, tail, now)` and `IterSplitWithScratch(head, tail, now, scratch)`: direct iterator over fragmented ring-buffer tokens.
+  - Ergonomic `IterWithScratch(token, now, scratch)` for contiguous tokens using caller-pinned workspaces.
+- **Lock-Free Dynamic Key Rotation (`UpdateKeys`):**
+  - `v.UpdateKeys(keys []Key)`: thread-safe, lock-free key rotation in live production traffic using atomic pointer swapping (`atomic.Pointer[keySet]`).
+  - Scratch state automatically detects key rotation version changes (`keyVersion`) without CAS locking or memory allocations, refreshing cached HMAC signers safely.
+- **Native RFC 7517 JWKS Parser (`ParseJWKS` / `UpdateKeysFromJWKS`):**
+  - Pure Go, zero-dependency JWKS parser supporting `oct` (HS256/384/512), `OKP` (Ed25519), and `EC` (ES256 P-256).
+  - Performs cryptographic curve checks (`elliptic.P256().IsOnCurve`), key lengths, and base64url decoding with strict error boundaries.
+  - `v.UpdateKeysFromJWKS(jwksJSON []byte)`: directly ingest JWKS from OIDC discovery endpoints and rotate keys in place without service interruption.
+- **Turnkey Reverse Proxy Auth Middleware (`ForwardAuthHandler`):**
+  - Native turnkey HTTP handler for edge authentication subrequests in Nginx (`ngx_http_auth_request_module`) and Traefik `ForwardAuth`.
+  - Supports token extraction from `Authorization: Bearer <token>`, custom headers (e.g. `X-Auth-Token`), or HTTP cookies.
+  - On valid authentication (HTTP 200), automatically sets downstream identity headers (`X-Auth-User`, `X-Auth-Sub`) for upstream request injection with optional `PopulateHeaders` callback.
+
+---
+
 ## [v2.0.2] - 2026-10-21
 
 ### Style & CI

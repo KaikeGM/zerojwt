@@ -91,6 +91,52 @@ func (v *Verifier) VerifySplitWithScratch(head, tail []byte, now int64, claims *
 	return v.parseStandardClaims(payload, now, claims)
 }
 
+// VerifySplitAndIterate validates a token split across head and tail buffers and atomically
+// invokes fn for each claim only if the entire token is cryptographically authentic and valid.
+// If any validation rule fails, fn is never called and the error is returned immediately.
+func (v *Verifier) VerifySplitAndIterate(head, tail []byte, now int64, fn func(key, val []byte, isStr bool) bool) error {
+	st := v.acquireScratch()
+	err := v.VerifySplitAndIterateWithScratch(head, tail, now, fn, st)
+	v.releaseScratch(st)
+	return err
+}
+
+// VerifySplitAndIterateWithScratch is identical to VerifySplitAndIterate but uses a caller-supplied Scratch state.
+func (v *Verifier) VerifySplitAndIterateWithScratch(head, tail []byte, now int64, fn func(key, val []byte, isStr bool) bool, st *Scratch) error {
+	if len(head) == 0 {
+		return v.VerifyAndIterateWithScratch(tail, now, fn, st)
+	}
+	if len(tail) == 0 {
+		return v.VerifyAndIterateWithScratch(head, now, fn, st)
+	}
+
+	payload, err := v.verifySplitSignatureAndDecodePayload(head, tail, st)
+	if err != nil {
+		return err
+	}
+
+	body, ok := TrimJSONObject(payload)
+	if !ok {
+		return ErrInvalidPayload
+	}
+
+	// Pass 1: Atomic cryptographic & claim validation
+	if err := v.validatePayloadClaims(body, now); err != nil {
+		return err
+	}
+
+	// Pass 2: Token is 100% valid; invoke callback
+	body, _ = TrimJSONObject(payload)
+	for len(body) > 0 {
+		key, val, isStr, rest, _ := NextJSONProp(body)
+		body = bytes.TrimSpace(rest)
+		if fn != nil && !fn(key, val, isStr) {
+			break
+		}
+	}
+	return nil
+}
+
 func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *Scratch) ([]byte, error) {
 	if v.destroyed.Load() {
 		return nil, ErrVerifierDestroyed
@@ -183,7 +229,8 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 	if err != nil || nHdr == 0 {
 		return nil, ErrInvalidHeader
 	}
-	keyIdx, err := v.validateHeader(st.hdrBuf[:nHdr])
+	ks := v.getKeySet()
+	keyIdx, err := v.validateHeader(st.hdrBuf[:nHdr], ks)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +249,7 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 	case AlgEdDSA:
 		pub := v.edPub
 		if keyIdx >= 0 {
-			pub = v.keys[keyIdx].ed25519Public
+			pub = ks.keys[keyIdx].ed25519Public
 		}
 		if len(pub) != 32 {
 			return nil, ErrInvalidSignature
@@ -223,7 +270,7 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 	case AlgES256:
 		pub := v.ecPub
 		if keyIdx >= 0 {
-			pub = v.keys[keyIdx].ecdsaPublic
+			pub = ks.keys[keyIdx].ecdsaPublic
 		}
 		if pub == nil {
 			return nil, ErrInvalidSignature
@@ -244,10 +291,10 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 	default:
 		mac := st.mac
 		if keyIdx >= 0 {
-			if len(v.keys[keyIdx].secret) == 0 {
+			if len(ks.keys[keyIdx].secret) == 0 {
 				return nil, ErrInvalidSignature
 			}
-			mac = st.keyMacs[keyIdx]
+			mac = st.getOrInitKeyMac(keyIdx, ks, v.newHasher)
 		} else if len(v.secret) == 0 {
 			return nil, ErrInvalidSignature
 		}

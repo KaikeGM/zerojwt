@@ -131,7 +131,42 @@ func TestGnetZeroJWTServer(t *testing.T) {
 		t.Fatalf("Unknown command expected error, got %q", resp)
 	}
 
-	// 10. High-concurrency test across multiple goroutines to verify WorkerScratchGroup & false sharing immunity
+	// 10. Test SPLIT_ITER (IterSplitWithScratch)
+	_, _ = conn.Write(append([]byte("SPLIT_ITER "), append(token, '\n')...))
+	resp, err = reader.ReadString('\n')
+	if err != nil || resp != "OK iter_sub=alice\n" {
+		t.Fatalf("SPLIT_ITER failed: got %q, err: %v", resp, err)
+	}
+
+	// Test short token on SPLIT_ITER
+	_, _ = conn.Write([]byte("SPLIT_ITER ab\n"))
+	resp, err = reader.ReadString('\n')
+	if err != nil || resp != "ERR: token too short\n" {
+		t.Fatalf("SPLIT_ITER short token expected error, got %q", resp)
+	}
+
+	// Test invalid token on SPLIT_ITER
+	_, _ = conn.Write([]byte("SPLIT_ITER invalid.split.token\n"))
+	resp, err = reader.ReadString('\n')
+	if err != nil || resp != "ERR: split iteration failed\n" {
+		t.Fatalf("SPLIT_ITER invalid token expected error, got %q", resp)
+	}
+
+	// 11. Test ROTATE (UpdateKeysFromJWKS)
+	_, _ = conn.Write([]byte("ROTATE invalid-jwks\n"))
+	resp, err = reader.ReadString('\n')
+	if err != nil || resp != "ERR: rotation failed\n" {
+		t.Fatalf("ROTATE invalid JWKS expected error, got %q", resp)
+	}
+
+	validJWKS := `{"keys":[{"kty":"oct","kid":"key-2","k":"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"}]}`
+	_, _ = conn.Write([]byte("ROTATE " + validJWKS + "\n"))
+	resp, err = reader.ReadString('\n')
+	if err != nil || resp != "OK keys_rotated\n" {
+		t.Fatalf("ROTATE valid JWKS failed, got %q", resp)
+	}
+
+	// 12. High-concurrency test across multiple goroutines to verify WorkerScratchGroup & false sharing immunity
 	var wg sync.WaitGroup
 	numClients := 10
 	iterations := 100

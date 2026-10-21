@@ -30,17 +30,21 @@ Assinatura, verificação e streaming de propriedades JSON de JWT de ultra-alta 
 - [Claims Customizadas e SignBuilder Fluente](#claims-customizadas-e-signbuilder-fluente)
   - [SignBuilder Fluente (0 allocs/op)](#signbuilder-fluente-0-allocsop)
   - [Escape Genérico de Strings JSON (0 allocs/op)](#escape-genérico-de-strings-json-0-allocsop)
-  - [Iterador Atômico de Claims (Go 1.23 iter.Seq2)](#iterador-atômico-de-claims-go-123-iterseq2)
+  - [Iterador Atômico de Claims (Go 1.23 iter.Seq2 & IterSplit)](#iterador-atômico-de-claims-go-123-iterseq2--itersplit)
 - [Primitivas de Rede para Arquiteturas Orientadas a Eventos (gnet, evio, epoll)](#primitivas-de-rede-para-arquiteturas-orientadas-a-eventos-gnet-evio-epoll)
   - [Validação em Buffer Circular Fragmentado (VerifySplit)](#1-validação-em-buffer-circular-fragmentado-verifysplit)
   - [Workspaces com Afinidade de Worker e Padding de Cache (WorkerScratchGroup)](#2-workspaces-com-afinidade-de-worker-e-padding-de-cache-workerscratchgroup)
   - [Assinatura Vetorizada Scatter/Gather (SignToIOV)](#3-assinatura-vetorizada-scattergather-signtoiov)
   - [Exemplo Completo de Gateway](#exemplo-completo-de-gateway)
-- [Rotação de Chaves sem Downtime (kid)](#rotação-de-chaves-sem-downtime-kid)
+- [Rotação de Chaves e Parser Nativo de JWKS (RFC 7517)](#rotação-de-chaves-e-parser-nativo-de-jwks-rfc-7517)
+  - [Registro Estático de Múltiplas Chaves](#1-registro-estático-de-múltiplas-chaves-kid)
+  - [Rotação Dinâmica Lock-Free (UpdateKeys)](#2-rotação-dinâmica-lock-free-updatekeys)
+  - [Parser Nativo de JWKS RFC 7517 (UpdateKeysFromJWKS)](#3-parser-nativo-de-jwks-rfc-7517-updatekeysfromjwks)
 - [Middlewares HTTP de Alta Performance](#middlewares-http-de-alta-performance)
   - [ProtectFunc (0 allocs/op)](#1-protectfunc-o-mais-rápido-zero-alocação)
   - [Middleware net/http Padrão](#2-middleware-nethttp-padrão)
   - [VerifyBearer](#3-verifybearer)
+  - [ForwardAuth Pronto para Uso para Nginx e Traefik](#4-forwardauth-pronto-para-uso-para-nginx-e-traefik)
 - [Endurecimento de Segurança e Higiene de Memória](#endurecimento-de-segurança-e-higiene-de-memória)
 - [Otimização Guiada por Perfil (PGO)](#otimização-guiada-por-perfil-pgo)
 - [Referência de Erros Sentinela](#referência-de-erros-sentinela)
@@ -358,16 +362,25 @@ buf = zerojwt.AppendEscapedJSON(buf, "550e8400-e29b-41d4-a716-446655440000")
 buf = append(buf, '}')
 ```
 
-### Iterador Atômico de Claims (Go 1.23 `iter.Seq2`)
+### Iterador Atômico de Claims (Go 1.23 `iter.Seq2` & `IterSplit`)
 
 Itera sobre todas as propriedades JSON padrão e customizadas com zero alocações na heap:
 
 ```go
+// Token contíguo:
 for prop, err := range v.Iter(token, now) {
     if err != nil {
         panic(err) // Aborta se a assinatura ou validação temporal falhar
     }
     fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Val, prop.IsStr)
+}
+
+// Token fragmentado em buffer circular (head + tail):
+for prop, err := range v.IterSplit(head, tail, now) {
+    if err != nil {
+        panic(err)
+    }
+    fmt.Printf("Claim Fragmentada %s = %s\n", prop.Key, prop.Val)
 }
 ```
 
@@ -430,7 +443,9 @@ Um gateway TCP de autenticação completo implementando as três primitivas com 
 
 ---
 
-## Rotação de Chaves sem Downtime (`kid`)
+## Rotação de Chaves e Parser Nativo de JWKS (RFC 7517)
+
+### 1. Registro Estático de Múltiplas Chaves (`kid`)
 
 Verifica tokens assinados por chaves antigas enquanto emite novos tokens utilizando a chave ativa:
 
@@ -442,6 +457,30 @@ v, err := zerojwt.New(primarySecret, zerojwt.Options{
         {ID: "key-2026-v1", Secret: retiredSecret}, // Ainda aceito para verificação
     },
 })
+```
+
+### 2. Rotação Dinâmica Lock-Free (`UpdateKeys`)
+
+Substitui atomicamente o conjunto de chaves `kid` durante tráfego em produção com zero downtime e zero locks via `atomic.Pointer`:
+
+```go
+// Substitui dinamicamente o conjunto de chaves durante o tráfego:
+err := v.UpdateKeys([]zerojwt.Key{
+    {ID: "key-2026-v3", Secret: nextGenSecret},
+    {ID: "key-2026-v2", Secret: primarySecret},
+})
+```
+
+### 3. Parser Nativo de JWKS RFC 7517 (`UpdateKeysFromJWKS`)
+
+Analisa e ingere conjuntos padrão de chaves JSON Web Key Sets (RFC 7517) de Provedores de Identidade (ex: Auth0, Keycloak, Okta, AWS Cognito) com **0 dependências externas**:
+
+```go
+// Parser JWKS em Go puro (suporta oct, OKP/Ed25519 e EC/P-256):
+keys, err := zerojwt.ParseJWKS(jwksJSONBytes)
+
+// Ou atualize o conjunto de chaves do Verifier diretamente a partir do JSON bruto sem downtime:
+err = v.UpdateKeysFromJWKS(jwksJSONBytes)
 ```
 
 ---
@@ -483,6 +522,52 @@ if err := v.VerifyBearer([]byte(authHeader), now, &claims); err != nil {
     http.Error(w, "Não autorizado", http.StatusUnauthorized)
     return
 }
+```
+
+### 4. ForwardAuth Pronto para Uso para Nginx e Traefik
+
+Manipulador HTTP pronto para sub-requisições de autenticação de proxies reversos. Responde com `200 OK` para tokens válidos e injeta automaticamente cabeçalhos de identidade (`X-Auth-User`, `X-Auth-Sub`) para repasse ao upstream; rejeita tokens inválidos ou expirados com `401 Unauthorized`:
+
+```go
+// Endpoint padrão de ForwardAuth (suporta tokens Bearer, cabeçalhos customizados e cookies)
+http.HandleFunc("/auth", v.ForwardAuthHandler(zerojwt.ForwardAuthOptions{
+    CookieName: "access_token", // Fallback para cookie se o cabeçalho Authorization estiver ausente
+}))
+```
+
+#### Integração com `ngx_http_auth_request_module` do Nginx:
+
+```nginx
+location /api/ {
+    auth_request /auth;
+    auth_request_set $auth_user $upstream_http_x_auth_user;
+    auth_request_set $auth_sub  $upstream_http_x_auth_sub;
+    
+    proxy_set_header X-User $auth_user;
+    proxy_set_header X-Sub  $auth_sub;
+    proxy_pass http://upstream_backend;
+}
+
+location = /auth {
+    internal;
+    proxy_pass http://auth_service:8080/auth;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URI $request_uri;
+}
+```
+
+#### Middleware `ForwardAuth` do Traefik:
+
+```yaml
+http:
+  middlewares:
+    zerojwt-auth:
+      forwardAuth:
+        address: "http://auth_service:8080/auth"
+        authResponseHeaders:
+          - "X-Auth-User"
+          - "X-Auth-Sub"
 ```
 
 ---

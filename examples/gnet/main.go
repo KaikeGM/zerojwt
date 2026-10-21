@@ -218,6 +218,56 @@ func (s *AuthServer) handleCommand(c gnet.Conn, line []byte, scratch *zerojwt.Sc
 		return
 	}
 
+	// 5. SPLIT_ITER <token> -> Iterates claims across circular ring buffer boundary with 0 allocs
+	if bytes.HasPrefix(line, []byte("SPLIT_ITER ")) {
+		token := line[11:]
+		if len(token) < 4 {
+			_, _ = c.Write([]byte("ERR: token too short\n"))
+			return
+		}
+
+		splitPoint := len(token) / 2
+		head := token[:splitPoint]
+		tail := token[splitPoint:]
+
+		var sub [256]byte
+		subLen := 0
+		var iterErr error
+		for prop, err := range s.verifier.IterSplitWithScratch(head, tail, now, scratch) {
+			if err != nil {
+				iterErr = err
+				break
+			}
+			if bytes.Equal(prop.Key, []byte("sub")) {
+				subLen = copy(sub[:], prop.Val)
+			}
+		}
+
+		if iterErr != nil {
+			_, _ = c.Write([]byte("ERR: split iteration failed\n"))
+			return
+		}
+
+		var resp [256]byte
+		n := copy(resp[:], "OK iter_sub=")
+		n += copy(resp[n:], sub[:subLen])
+		resp[n] = '\n'
+		n++
+		_, _ = c.Write(resp[:n])
+		return
+	}
+
+	// 6. ROTATE <jwks_json> -> Dynamic lock-free key rotation via RFC 7517 JWKS
+	if bytes.HasPrefix(line, []byte("ROTATE ")) {
+		jwksJSON := line[7:]
+		if err := s.verifier.UpdateKeysFromJWKS(jwksJSON); err != nil {
+			_, _ = c.Write([]byte("ERR: rotation failed\n"))
+			return
+		}
+		_, _ = c.Write([]byte("OK keys_rotated\n"))
+		return
+	}
+
 	_, _ = c.Write([]byte("ERR: unknown command\n"))
 }
 

@@ -92,6 +92,39 @@ func ObjectProperties(rawObject []byte, errOut ...*error) iter.Seq[JSONProp] {
 	}
 }
 
+// IterWithScratch is identical to Iter but uses a caller-supplied Scratch state.
+func (v *Verifier) IterWithScratch(tok []byte, now int64, st *Scratch) iter.Seq2[JSONProp, error] {
+	return func(yield func(JSONProp, error) bool) {
+		plBytes, err := v.verifySignatureAndDecodePayload(tok, st)
+		if err != nil {
+			yield(JSONProp{}, err)
+			return
+		}
+
+		body, ok := TrimJSONObject(plBytes)
+		if !ok {
+			yield(JSONProp{}, ErrInvalidPayload)
+			return
+		}
+
+		// Pass 1: Atomic cryptographic & claim validation
+		if err := v.validatePayloadClaims(body, now); err != nil {
+			yield(JSONProp{}, err)
+			return
+		}
+
+		// Pass 2: Token is 100% valid; yield verified claims
+		body, _ = TrimJSONObject(plBytes)
+		for len(body) > 0 {
+			key, val, isStr, rest, _ := NextJSONProp(body)
+			body = rest
+			if !yield(JSONProp{Key: key, Val: val, IsStr: isStr}, nil) {
+				return
+			}
+		}
+	}
+}
+
 // Iter returns an iterator yielding each verified claim (JSONProp) in the token,
 // or an error if verification or validation fails.
 //
@@ -99,10 +132,39 @@ func ObjectProperties(rawObject []byte, errOut ...*error) iter.Seq[JSONProp] {
 // the error is yielded once and iteration terminates immediately without yielding claims.
 func (v *Verifier) Iter(tok []byte, now int64) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
-		st := v.pool.Get().(*Scratch)
+		st := v.acquireScratch()
 		defer v.releaseScratch(st)
+		v.IterWithScratch(tok, now, st)(yield)
+	}
+}
 
-		plBytes, err := v.verifySignatureAndDecodePayload(tok, st)
+// IterSplit returns an iterator yielding each verified claim (JSONProp) in a token
+// split across non-contiguous head and tail byte slices (such as circular ring buffers),
+// or an error if verification or validation fails.
+//
+// Verification is atomic: if the token is not authentic or fails any validation rule,
+// the error is yielded once and iteration terminates immediately without yielding claims.
+func (v *Verifier) IterSplit(head, tail []byte, now int64) iter.Seq2[JSONProp, error] {
+	return func(yield func(JSONProp, error) bool) {
+		st := v.acquireScratch()
+		defer v.releaseScratch(st)
+		v.IterSplitWithScratch(head, tail, now, st)(yield)
+	}
+}
+
+// IterSplitWithScratch is identical to IterSplit but uses a caller-supplied Scratch state.
+func (v *Verifier) IterSplitWithScratch(head, tail []byte, now int64, st *Scratch) iter.Seq2[JSONProp, error] {
+	return func(yield func(JSONProp, error) bool) {
+		if len(head) == 0 {
+			v.IterWithScratch(tail, now, st)(yield)
+			return
+		}
+		if len(tail) == 0 {
+			v.IterWithScratch(head, now, st)(yield)
+			return
+		}
+
+		plBytes, err := v.verifySplitSignatureAndDecodePayload(head, tail, st)
 		if err != nil {
 			yield(JSONProp{}, err)
 			return

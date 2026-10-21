@@ -241,6 +241,58 @@ func TestREADMEExamples(t *testing.T) {
 		t.Fatalf("VerifyBearer failed: %v", err)
 	}
 
+	// IterSplit
+	head = token[:len(token)/2]
+	tail = token[len(token)/2:]
+	for prop, err := range v.IterSplit(head, tail, now) {
+		if err != nil {
+			t.Fatalf("IterSplit failed: %v", err)
+		}
+		_ = prop.Key
+	}
+
+	// UpdateKeys
+	newSecret := []byte("new-32-byte-ultra-secure-secret-key!!")
+	if err := v.UpdateKeys([]zerojwt.Key{
+		{ID: "key-2026-v3", Secret: newSecret},
+		{ID: "key-2026-v2", Secret: secret},
+	}); err != nil {
+		t.Fatalf("UpdateKeys failed: %v", err)
+	}
+
+	// ForwardAuthHandler
+	fwdHandler := v.ForwardAuthHandler(zerojwt.ForwardAuthOptions{
+		CookieName: "access_token",
+	})
+	fwdSigner, err := zerojwt.New(newSecret, zerojwt.Options{ActiveKeyID: "key-2026-v3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwdTok, err := fwdSigner.SignClaims(nil, zerojwt.StandardClaims{
+		ExpiresAt: now + 3600,
+		Subject:   "usr_fwd",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwdReq := httptest.NewRequest("GET", "/auth", nil)
+	fwdReq.Header.Set("Authorization", "Bearer "+string(fwdTok))
+	recFwd := httptest.NewRecorder()
+	fwdHandler.ServeHTTP(recFwd, fwdReq)
+	if recFwd.Code != http.StatusOK {
+		t.Fatalf("ForwardAuthHandler expected 200, got %d", recFwd.Code)
+	}
+
+	// ParseJWKS & UpdateKeysFromJWKS
+	jwksRaw := []byte(`{"keys":[{"kty":"oct","kid":"key-2026-v4","k":"bmV3LTMyLWJ5dGUtdWx0cmEtc2VjdXJlLXNlY3JldC1rZXkhIQ"}]}`)
+	parsedKeys, err := zerojwt.ParseJWKS(jwksRaw)
+	if err != nil || len(parsedKeys) != 1 {
+		t.Fatalf("ParseJWKS failed: %v", err)
+	}
+	if err := v.UpdateKeysFromJWKS(jwksRaw); err != nil {
+		t.Fatalf("UpdateKeysFromJWKS failed: %v", err)
+	}
+
 	// 11. Destroy
 	vEd.Destroy()
 	if vEd.CanSign() {

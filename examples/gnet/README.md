@@ -60,6 +60,8 @@ The server accepts newline-delimited text commands (`\n`):
 | `LOGIN <user>` | Issues a signed JWT token for the user | `SignClaimsToIOVWithScratch` + `c.Writev` |
 | `AUTH <token>` | Validates the incoming token | `VerifyWithScratch` |
 | `SPLIT <token>` | Simulates ring-buffer fragmented token | `VerifySplitWithScratch` |
+| `SPLIT_ITER <token>` | Iterates claims across fragmented ring buffer | `IterSplitWithScratch` |
+| `ROTATE <jwks_json>` | Hot-swaps keys in live traffic without downtime | `UpdateKeysFromJWKS` |
 
 ---
 

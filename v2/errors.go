@@ -36,6 +36,9 @@ var (
 	// ErrInvalidConfig indicates an unusable Verifier configuration (e.g. short secret, invalid ECDSA curve).
 	ErrInvalidConfig = errors.New("zerojwt: invalid verifier configuration")
 
+	// ErrInvalidJWKS indicates the provided JWKS JSON is malformed or contains unsupported/invalid keys.
+	ErrInvalidJWKS = errors.New("zerojwt: invalid JWKS format")
+
 	// ErrVerifierDestroyed indicates the Verifier was invalidated via Destroy() and cannot verify or sign tokens.
 	ErrVerifierDestroyed = errors.New("zerojwt: verifier has been destroyed")
 

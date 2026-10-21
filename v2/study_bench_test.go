@@ -80,6 +80,19 @@ func TestStudyZeroAllocations(t *testing.T) {
 	if workerVerifyAllocs != 0 {
 		t.Fatalf("expected 0 allocs in WorkerScratchGroup Verify, got %v", workerVerifyAllocs)
 	}
+
+	// 5. VerifySplitAndIterateWithScratch: 0 allocs
+	splitIterAllocs := testing.AllocsPerRun(100, func() {
+		err := v.VerifySplitAndIterateWithScratch(iov[0], iov[1], now, func(k, val []byte, isStr bool) bool {
+			return true
+		}, workerScratch)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if splitIterAllocs != 0 {
+		t.Fatalf("expected 0 allocs in VerifySplitAndIterateWithScratch, got %v", splitIterAllocs)
+	}
 }
 
 func BenchmarkSignHS256_Standard(b *testing.B) {

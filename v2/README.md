@@ -30,17 +30,21 @@ High-performance, zero-allocation JWT signing, verification, and JSON property s
 - [Custom Claims & Fluent SignBuilder](#custom-claims--fluent-signbuilder)
   - [Fluent SignBuilder (0 allocs/op)](#fluent-signbuilder-0-allocsop)
   - [Generic JSON String Escaping (0 allocs/op)](#generic-json-string-escaping-0-allocsop)
-  - [Atomic Claim Iteration (Go 1.23 iter.Seq2)](#atomic-claim-iteration-go-123-iterseq2)
+  - [Atomic Claim Iteration (Go 1.23 iter.Seq2 & IterSplit)](#atomic-claim-iteration-go-123-iterseq2--itersplit)
 - [Event-Driven Network Primitives (gnet, evio, epoll)](#event-driven-network-primitives-gnet-evio-epoll)
   - [Fragmented Ring-Buffer Validation (VerifySplit)](#1-fragmented-ring-buffer-validation-verifysplit)
   - [Worker-Pinned Cache-Padded Workspaces (WorkerScratchGroup)](#2-worker-pinned-cache-padded-workspaces-workerscratchgroup)
   - [Vectorized Scatter/Gather Signing (SignToIOV)](#3-vectorized-scattergather-signing-signtoiov)
   - [Complete Runnable Gateway Sample](#complete-runnable-gateway-sample)
-- [Zero-Downtime Key Rotation (kid)](#zero-downtime-key-rotation-kid)
+- [Key Rotation & Native RFC 7517 JWKS](#key-rotation--native-rfc-7517-jwks)
+  - [Static Multi-Key Registration](#1-static-multi-key-registration-kid)
+  - [Lock-Free Dynamic Key Rotation (UpdateKeys)](#2-lock-free-dynamic-key-rotation-updatekeys)
+  - [Native RFC 7517 JWKS Parser (UpdateKeysFromJWKS)](#3-native-rfc-7517-jwks-parser-updatekeysfromjwks)
 - [High-Speed HTTP Middlewares](#high-speed-http-middlewares)
   - [ProtectFunc (0 allocs/op)](#1-protectfunc-fastest-zero-allocation)
   - [Standard net/http Middleware](#2-standard-nethttp-middleware)
   - [VerifyBearer](#3-verifybearer)
+  - [Turnkey ForwardAuth for Nginx & Traefik](#4-turnkey-forwardauth-for-nginx--traefik)
 - [Security Hardening & Memory Hygiene](#security-hardening--memory-hygiene)
 - [Profile-Guided Optimization (PGO)](#profile-guided-optimization-pgo)
 - [Sentinel Errors Reference](#sentinel-errors-reference)
@@ -358,16 +362,25 @@ buf = zerojwt.AppendEscapedJSON(buf, "550e8400-e29b-41d4-a716-446655440000")
 buf = append(buf, '}')
 ```
 
-### Atomic Claim Iteration (Go 1.23 `iter.Seq2`)
+### Atomic Claim Iteration (Go 1.23 `iter.Seq2` & `IterSplit`)
 
 Iterate over all custom and standard JSON properties in the verified payload with zero allocations:
 
 ```go
+// Contiguous token:
 for prop, err := range v.Iter(token, now) {
     if err != nil {
         panic(err) // Aborts if signature or temporal validation fails
     }
     fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Val, prop.IsStr)
+}
+
+// Fragmented ring-buffer token (head + tail):
+for prop, err := range v.IterSplit(head, tail, now) {
+    if err != nil {
+        panic(err)
+    }
+    fmt.Printf("Split Claim %s = %s\n", prop.Key, prop.Val)
 }
 ```
 
@@ -430,7 +443,9 @@ A complete production-ready TCP authentication gateway implementing all three pr
 
 ---
 
-## Zero-Downtime Key Rotation (`kid`)
+## Key Rotation & Native RFC 7517 JWKS
+
+### 1. Static Multi-Key Registration (`kid`)
 
 Verify tokens signed by older keys while issuing new tokens using the active key:
 
@@ -442,6 +457,30 @@ v, err := zerojwt.New(primarySecret, zerojwt.Options{
         {ID: "key-2026-v1", Secret: retiredSecret}, // Still accepted for verification
     },
 })
+```
+
+### 2. Lock-Free Dynamic Key Rotation (`UpdateKeys`)
+
+Atomically swap the registered `kid` key set in live production traffic with zero downtime and zero mutex locking via `atomic.Pointer`:
+
+```go
+// Dynamically replace the key set during live traffic:
+err := v.UpdateKeys([]zerojwt.Key{
+    {ID: "key-2026-v3", Secret: nextGenSecret},
+    {ID: "key-2026-v2", Secret: primarySecret},
+})
+```
+
+### 3. Native RFC 7517 JWKS Parser (`UpdateKeysFromJWKS`)
+
+Parse and ingest standard JSON Web Key Sets (RFC 7517) from Identity Providers (e.g. Auth0, Keycloak, Okta, AWS Cognito) with **0 external dependencies**:
+
+```go
+// Pure Go JWKS parsing (supports oct, OKP/Ed25519, and EC/P-256):
+keys, err := zerojwt.ParseJWKS(jwksJSONBytes)
+
+// Or rotate the Verifier's key store directly from raw JWKS JSON without downtime:
+err = v.UpdateKeysFromJWKS(jwksJSONBytes)
 ```
 
 ---
@@ -483,6 +522,52 @@ if err := v.VerifyBearer([]byte(authHeader), now, &claims); err != nil {
     http.Error(w, "Unauthorized", http.StatusUnauthorized)
     return
 }
+```
+
+### 4. Turnkey ForwardAuth for Nginx & Traefik
+
+A turnkey HTTP handler specifically tailored for reverse proxy authentication subrequests. Responds with `200 OK` on valid tokens and automatically injects authentication headers (`X-Auth-User`, `X-Auth-Sub`) for upstream request enrichment; rejects invalid or expired tokens with `401 Unauthorized`:
+
+```go
+// Standard ForwardAuth endpoint (supports Bearer tokens, custom headers, and cookies)
+http.HandleFunc("/auth", v.ForwardAuthHandler(zerojwt.ForwardAuthOptions{
+    CookieName: "access_token", // Fallback to cookie if Authorization header is absent
+}))
+```
+
+#### Nginx `ngx_http_auth_request_module` Integration:
+
+```nginx
+location /api/ {
+    auth_request /auth;
+    auth_request_set $auth_user $upstream_http_x_auth_user;
+    auth_request_set $auth_sub  $upstream_http_x_auth_sub;
+    
+    proxy_set_header X-User $auth_user;
+    proxy_set_header X-Sub  $auth_sub;
+    proxy_pass http://upstream_backend;
+}
+
+location = /auth {
+    internal;
+    proxy_pass http://auth_service:8080/auth;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URI $request_uri;
+}
+```
+
+#### Traefik `ForwardAuth` Middleware:
+
+```yaml
+http:
+  middlewares:
+    zerojwt-auth:
+      forwardAuth:
+        address: "http://auth_service:8080/auth"
+        authResponseHeaders:
+          - "X-Auth-User"
+          - "X-Auth-Sub"
 ```
 
 ---

@@ -60,6 +60,8 @@ O servidor aceita comandos em texto delimitados por `\n`:
 | `LOGIN <user>` | Gera um token JWT assinado para o usuário | `SignClaimsToIOVWithScratch` + `c.Writev` |
 | `AUTH <token>` | Valida o token recebido | `VerifyWithScratch` |
 | `SPLIT <token>` | Simula token particionado no anel circular | `VerifySplitWithScratch` |
+| `SPLIT_ITER <token>` | Itera sobre as claims no anel circular fragmentado | `IterSplitWithScratch` |
+| `ROTATE <jwks_json>` | Troca de chaves a quente sem downtime | `UpdateKeysFromJWKS` |
 
 ---
 

@@ -88,6 +88,11 @@ type compiledKey struct {
 	ecdsaPublic   *ecdsa.PublicKey
 }
 
+type keySet struct {
+	keys       []compiledKey
+	keyVersion int64
+}
+
 // Options configures algorithm, buffer sizes, clock skew leeway, issuer/audience rules,
 // key rotation ("kid"), and opt-in relaxations for secure-by-default behavior.
 type Options struct {
@@ -129,6 +134,7 @@ type Options struct {
 type Scratch struct {
 	mac        hash.Hash
 	keyMacs    []hash.Hash
+	keyVersion int64
 	sigBuf     [96]byte
 	sumBuf     [64]byte
 	derBuf     [72]byte
@@ -259,6 +265,9 @@ type Verifier struct {
 	ecPub                 *ecdsa.PublicKey
 	ecPriv                *ecdsa.PrivateKey
 	keys                  []compiledKey
+	keySetPtr             atomic.Pointer[keySet]
+	keyVersionSeq         atomic.Int64
+	strictSecret          bool
 	leewaySec             int64
 	expectedIss           []byte
 	expectedAud           []byte
@@ -379,18 +388,7 @@ func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 		defaultHdrDot = base64.RawURLEncoding.EncodeToString(hdrJSON) + "."
 	}
 
-	var cKeys []compiledKey
-	if len(opts.Keys) > 0 {
-		cKeys = make([]compiledKey, len(opts.Keys))
-		for i, k := range opts.Keys {
-			cKeys[i] = compiledKey{
-				idBytes:       []byte(k.ID),
-				secret:        append([]byte(nil), k.Secret...),
-				ed25519Public: append(ed25519.PublicKey(nil), k.Ed25519Public...),
-				ecdsaPublic:   k.ECDSAPublic,
-			}
-		}
-	}
+	cKeys := compileKeys(opts.Keys)
 
 	edPub := opts.Ed25519PublicKey
 	if len(edPub) == 0 && len(opts.Ed25519PrivateKey) == ed25519.PrivateKeySize {
@@ -414,12 +412,20 @@ func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 		ecPub:                 ecPub,
 		ecPriv:                opts.ECDSAPrivateKey,
 		keys:                  cKeys,
+		strictSecret:          !opts.AllowShortSecret,
 		leewaySec:             int64(opts.Leeway / time.Second),
 		maxHeaderSize:         hdrSize,
 		maxPayloadSize:        plSize,
 		zeroMemory:            opts.ZeroMemory,
 		requireExp:            !opts.AllowMissingExp, // secure by default in v2
 	}
+	ks := &keySet{
+		keys:       cKeys,
+		keyVersion: 1,
+	}
+	v.keySetPtr.Store(ks)
+	v.keyVersionSeq.Store(1)
+
 	if opts.ExpectedIssuer != "" {
 		v.expectedIss = []byte(opts.ExpectedIssuer)
 	}
@@ -451,32 +457,8 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 	isHS := minHS > 0
 	strictSecret := !opts.AllowShortSecret // secure by default in v2
 
-	seen := make(map[string]struct{}, len(opts.Keys))
-	for i, k := range opts.Keys {
-		if k.ID == "" {
-			return invalid("Keys[%d]: empty ID", i)
-		}
-		if _, dup := seen[k.ID]; dup {
-			return invalid("Keys[%d]: duplicate ID %q", i, k.ID)
-		}
-		seen[k.ID] = struct{}{}
-		switch {
-		case isHS:
-			if len(k.Secret) == 0 {
-				return invalid("Keys[%d] (%q): %s needs a non-empty Secret", i, k.ID, alg)
-			}
-			if strictSecret && len(k.Secret) < minHS {
-				return invalid("Keys[%d] (%q): %s secret must be at least %d bytes", i, k.ID, alg, minHS)
-			}
-		case alg == AlgEdDSA:
-			if len(k.Ed25519Public) != ed25519.PublicKeySize {
-				return invalid("Keys[%d] (%q): EdDSA needs a %d-byte Ed25519Public", i, k.ID, ed25519.PublicKeySize)
-			}
-		case alg == AlgES256:
-			if k.ECDSAPublic == nil || k.ECDSAPublic.Curve != elliptic.P256() {
-				return invalid("Keys[%d] (%q): ES256 needs a P-256 ECDSAPublic", i, k.ID)
-			}
-		}
+	if err := validateKeysList(opts.Keys, alg, strictSecret); err != nil {
+		return err
 	}
 
 	switch {
@@ -535,6 +517,97 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 	return nil
 }
 
+func compileKeys(keys []Key) []compiledKey {
+	if len(keys) == 0 {
+		return nil
+	}
+	cKeys := make([]compiledKey, len(keys))
+	for i, k := range keys {
+		cKeys[i] = compiledKey{
+			idBytes:       []byte(k.ID),
+			secret:        append([]byte(nil), k.Secret...),
+			ed25519Public: append(ed25519.PublicKey(nil), k.Ed25519Public...),
+			ecdsaPublic:   k.ECDSAPublic,
+		}
+	}
+	return cKeys
+}
+
+func validateKeysList(keys []Key, alg Algorithm, strictSecret bool) error {
+	invalid := func(format string, a ...any) error {
+		return fmt.Errorf("%w: %s", ErrInvalidConfig, fmt.Sprintf(format, a...))
+	}
+	minHS := 0
+	switch alg {
+	case AlgHS256:
+		minHS = 32
+	case AlgHS384:
+		minHS = 48
+	case AlgHS512:
+		minHS = 64
+	case AlgEdDSA, AlgES256:
+	default:
+		return invalid("unsupported algorithm %q", string(alg))
+	}
+	isHS := minHS > 0
+
+	seen := make(map[string]struct{}, len(keys))
+	for i, k := range keys {
+		if k.ID == "" {
+			return invalid("Keys[%d]: empty ID", i)
+		}
+		if _, dup := seen[k.ID]; dup {
+			return invalid("Keys[%d]: duplicate ID %q", i, k.ID)
+		}
+		seen[k.ID] = struct{}{}
+		switch {
+		case isHS:
+			if len(k.Secret) == 0 {
+				return invalid("Keys[%d] (%q): %s needs a non-empty Secret", i, k.ID, alg)
+			}
+			if strictSecret && len(k.Secret) < minHS {
+				return invalid("Keys[%d] (%q): %s secret must be at least %d bytes", i, k.ID, alg, minHS)
+			}
+		case alg == AlgEdDSA:
+			if len(k.Ed25519Public) != ed25519.PublicKeySize {
+				return invalid("Keys[%d] (%q): EdDSA needs a %d-byte Ed25519Public", i, k.ID, ed25519.PublicKeySize)
+			}
+		case alg == AlgES256:
+			if k.ECDSAPublic == nil || k.ECDSAPublic.Curve != elliptic.P256() {
+				return invalid("Keys[%d] (%q): ES256 needs a P-256 ECDSAPublic", i, k.ID)
+			}
+		}
+	}
+	return nil
+}
+
+// getKeySet returns the current active keySet pointer atomically with zero locks.
+func (v *Verifier) getKeySet() *keySet {
+	if ks := v.keySetPtr.Load(); ks != nil {
+		return ks
+	}
+	return &keySet{keys: v.keys, keyVersion: 1}
+}
+
+// UpdateKeys atomically replaces the registered "kid" key set in the Verifier without downtime.
+// It is 100% thread-safe and lock-free for concurrent verification during live traffic.
+func (v *Verifier) UpdateKeys(keys []Key) error {
+	if v.destroyed.Load() {
+		return ErrVerifierDestroyed
+	}
+	if err := validateKeysList(keys, v.alg, v.strictSecret); err != nil {
+		return err
+	}
+	cKeys := compileKeys(keys)
+	newVer := v.keyVersionSeq.Add(1)
+	newKS := &keySet{
+		keys:       cKeys,
+		keyVersion: newVer,
+	}
+	v.keySetPtr.Store(newKS)
+	return nil
+}
+
 // CanSign reports whether this Verifier holds key material needed to issue tokens.
 func (v *Verifier) CanSign() bool {
 	if v.destroyed.Load() {
@@ -569,6 +642,11 @@ func (v *Verifier) Destroy() {
 	for i := range v.keys {
 		memclr(v.keys[i].secret)
 	}
+	if ks := v.keySetPtr.Load(); ks != nil {
+		for i := range ks.keys {
+			memclr(ks.keys[i].secret)
+		}
+	}
 	v.ecPriv = nil
 }
 
@@ -585,14 +663,35 @@ func (v *Verifier) newHasher(sec []byte) hash.Hash {
 	}
 }
 
+func (st *Scratch) getOrInitKeyMac(keyIdx int, ks *keySet, newHasher func([]byte) hash.Hash) hash.Hash {
+	if st.keyVersion != ks.keyVersion {
+		st.keyMacs = nil
+		st.keyVersion = ks.keyVersion
+	}
+	if keyIdx < len(st.keyMacs) && st.keyMacs[keyIdx] != nil {
+		return st.keyMacs[keyIdx]
+	}
+	if keyIdx >= len(st.keyMacs) {
+		newMacs := make([]hash.Hash, len(ks.keys))
+		copy(newMacs, st.keyMacs)
+		st.keyMacs = newMacs
+	}
+	if st.keyMacs[keyIdx] == nil {
+		st.keyMacs[keyIdx] = newHasher(ks.keys[keyIdx].secret)
+	}
+	return st.keyMacs[keyIdx]
+}
+
 // NewScratch allocates a new Scratch state bound to this Verifier's keys and buffer sizes.
 func (v *Verifier) NewScratch() *Scratch {
+	ks := v.getKeySet()
 	st := &Scratch{
-		mac: v.newHasher(v.secret),
+		mac:        v.newHasher(v.secret),
+		keyVersion: ks.keyVersion,
 	}
-	if len(v.keys) > 0 && (v.alg == AlgHS256 || v.alg == AlgHS384 || v.alg == AlgHS512) {
-		st.keyMacs = make([]hash.Hash, len(v.keys))
-		for i, k := range v.keys {
+	if len(ks.keys) > 0 && (v.alg == AlgHS256 || v.alg == AlgHS384 || v.alg == AlgHS512) {
+		st.keyMacs = make([]hash.Hash, len(ks.keys))
+		for i, k := range ks.keys {
 			st.keyMacs[i] = v.newHasher(k.secret)
 		}
 	}
@@ -851,8 +950,13 @@ func (v *Verifier) VerifyLargeWithScratch(tok []byte, nowUnix int64, out *Claims
 // If any validation rule fails, fn is never called and the error is returned immediately.
 func (v *Verifier) VerifyAndIterate(tok []byte, nowUnix int64, fn func(key, val []byte, isStr bool) bool) error {
 	st := v.acquireScratch()
-	defer v.releaseScratch(st)
+	err := v.VerifyAndIterateWithScratch(tok, nowUnix, fn, st)
+	v.releaseScratch(st)
+	return err
+}
 
+// VerifyAndIterateWithScratch is identical to VerifyAndIterate but uses a caller-supplied Scratch state.
+func (v *Verifier) VerifyAndIterateWithScratch(tok []byte, nowUnix int64, fn func(key, val []byte, isStr bool) bool, st *Scratch) error {
 	plBytes, err := v.verifySignatureAndDecodePayload(tok, st)
 	if err != nil {
 		return err
@@ -982,7 +1086,8 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 	if err != nil || nHdr == 0 {
 		return nil, ErrInvalidHeader
 	}
-	keyIdx, err := v.validateHeader(st.hdrBuf[:nHdr])
+	ks := v.getKeySet()
+	keyIdx, err := v.validateHeader(st.hdrBuf[:nHdr], ks)
 	if err != nil {
 		return nil, err
 	}
@@ -1002,7 +1107,7 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 	case AlgEdDSA:
 		pub := v.edPub
 		if keyIdx >= 0 {
-			pub = v.keys[keyIdx].ed25519Public
+			pub = ks.keys[keyIdx].ed25519Public
 		}
 		if len(pub) != ed25519.PublicKeySize || !ed25519.Verify(pub, tok[:signingInputLen], st.sigBuf[:64]) {
 			return nil, ErrInvalidSignature
@@ -1010,7 +1115,7 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 	case AlgES256:
 		pub := v.ecPub
 		if keyIdx >= 0 {
-			pub = v.keys[keyIdx].ecdsaPublic
+			pub = ks.keys[keyIdx].ecdsaPublic
 		}
 		if pub == nil {
 			return nil, ErrInvalidSignature
@@ -1026,10 +1131,10 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 	default:
 		mac := st.mac
 		if keyIdx >= 0 {
-			if len(v.keys[keyIdx].secret) == 0 {
+			if len(ks.keys[keyIdx].secret) == 0 {
 				return nil, ErrInvalidSignature
 			}
-			mac = st.keyMacs[keyIdx]
+			mac = st.getOrInitKeyMac(keyIdx, ks, v.newHasher)
 		} else if len(v.secret) == 0 {
 			return nil, ErrInvalidSignature
 		}
@@ -1053,7 +1158,11 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 	return st.payloadBuf[:nPl], nil
 }
 
-func (v *Verifier) validateHeader(h []byte) (int, error) {
+func (v *Verifier) validateHeader(h []byte, optKS ...*keySet) (int, error) {
+	ks := v.getKeySet()
+	if len(optKS) > 0 && optKS[0] != nil {
+		ks = optKS[0]
+	}
 	body, ok := TrimJSONObject(h)
 	if !ok {
 		return -1, ErrInvalidHeader
@@ -1104,10 +1213,11 @@ func (v *Verifier) validateHeader(h []byte) (int, error) {
 			if bytes.IndexByte(val, '\\') >= 0 {
 				val = UnescapeJSONInPlace(val)
 			}
-			if len(v.keys) > 0 {
+			keys := ks.keys
+			if len(keys) > 0 {
 				found := -1
-				for i := range v.keys {
-					if bytes.Equal(v.keys[i].idBytes, val) {
+				for i := range keys {
+					if bytes.Equal(keys[i].idBytes, val) {
 						found = i
 						break
 					}
@@ -1116,6 +1226,8 @@ func (v *Verifier) validateHeader(h []byte) (int, error) {
 					return -1, ErrUnknownKeyID
 				}
 				keyIdx = found
+			} else {
+				return -1, ErrUnknownKeyID
 			}
 		}
 	}
