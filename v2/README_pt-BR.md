@@ -63,7 +63,7 @@ O `zerojwt/v2` representa a evolução unificada e blindada do `zerojwt`, elimin
 
 2. **Construtor Seguro por Padrão**
    - `New(secret, ...Options)` é estritamente seguro por padrão:
-     - **RFC 7518 §3.2**: Rejeita chaves menores que o tamanho de hash do algoritmo (32 bytes para HS256, 48 para HS384, 64 para HS512) com `ErrInsecureSecret`.
+     - **RFC 7518 §3.2**: Rejeita chaves menores que o tamanho de hash do algoritmo (32 bytes para HS256, 48 para HS384, 64 para HS512) com `ErrInvalidConfig` (ou alias `ErrInsecureSecret`).
      - **OIDC Core 1.0 §3.1.3.7 / RFC 9068 §2.2**: Rejeita tokens sem a claim `exp` com `ErrMissingExp`.
    - Opções explícitas de opt-out para migração legada: `Options{AllowShortSecret: true, AllowMissingExp: true}`.
 
@@ -367,7 +367,7 @@ for prop, err := range v.Iter(token, now) {
     if err != nil {
         panic(err) // Aborta se a assinatura ou validação temporal falhar
     }
-    fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Value, prop.IsString)
+    fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Val, prop.IsStr)
 }
 ```
 
@@ -496,7 +496,7 @@ if err := v.VerifyBearer([]byte(authHeader), now, &claims); err != nil {
 3. **Exigência Obrigatória de Expiração**:  
    Por padrão, tokens sem `exp` são rejeitados (`ErrMissingExp`), em conformidade com OIDC Core 1.0 §3.1.3.7 e RFC 9068 §2.2.
 4. **Validação de Tamanho Mínimo de Chave**:  
-   Segredos menores que o tamanho do hash são rejeitados na inicialização com `ErrInsecureSecret` conforme RFC 7518 §3.2.
+   Segredos menores que o tamanho do hash são rejeitados na inicialização com `ErrInvalidConfig` (`ErrInsecureSecret`) conforme RFC 7518 §3.2.
 
 ---
 

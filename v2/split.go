@@ -96,6 +96,12 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 		return nil, ErrVerifierDestroyed
 	}
 
+	// Go's base64 decoder silently skips CR/LF; reject them so token has a single canonical representation
+	if bytes.IndexByte(head, '\n') >= 0 || bytes.IndexByte(head, '\r') >= 0 ||
+		bytes.IndexByte(tail, '\n') >= 0 || bytes.IndexByte(tail, '\r') >= 0 {
+		return nil, ErrInvalidToken
+	}
+
 	// Identify the three segments across head and tail
 	var (
 		h1, h2       []byte

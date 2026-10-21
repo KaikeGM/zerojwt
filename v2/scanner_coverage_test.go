@@ -103,4 +103,10 @@ func TestScannerDeepCoverage(t *testing.T) {
 	if _, ok := zerojwt.ParseJSONNumber([]byte("123e-")); ok {
 		t.Fatal("expected false for lone 123e-")
 	}
+
+	// 6. JSONProp Value() and IsString() aliases
+	prop := zerojwt.JSONProp{Key: []byte("foo"), Val: []byte("bar"), IsStr: true}
+	if string(prop.Value()) != "bar" || !prop.IsString() {
+		t.Fatalf("unexpected JSONProp helper result: val=%s isStr=%v", prop.Value(), prop.IsString())
+	}
 }

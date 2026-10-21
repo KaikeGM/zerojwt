@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.1] - 2026-10-21
+
+### Security & Hardening
+- **Canonical Token Enforcement in `VerifySplit` (`v2/split.go`):** Rejects embedded `\r` and `\n` characters in `head` and `tail` within `verifySplitSignatureAndDecodePayload`, closing lenient whitespace acceptance by the base64 decoder and guaranteeing a single canonical token representation across fragmented ring buffers.
+
+### Added
+- **`ErrInsecureSecret` Sentinel Alias (`v2/errors.go`):** Added `ErrInsecureSecret = ErrInvalidConfig` alias aligning with RFC 7518 documentation references and allowing callers to query either error identifier with `errors.Is`.
+- **`JSONProp` Ergonomic Accessors (`v2/scanner.go`):** Added `.Value() []byte` and `.IsString() bool` methods on `JSONProp` as aliases for `Val` and `IsStr`.
+- **Bilingual Documentation for `examples/gnet`:** Added complete Portuguese guide [`examples/gnet/README_pt-BR.md`](examples/gnet/README_pt-BR.md) alongside English [`examples/gnet/README.md`](examples/gnet/README.md) with language switcher links.
+
+### Fixed
+- **Documentation Snippet Precision:** Corrected `v2/README.md` and `v2/README_pt-BR.md` `Iter` code examples from `prop.Value` / `prop.IsString` to `prop.Val` / `prop.IsStr`.
+- **Packaging Hygiene:** Removed compiled `zerojwt.test` binary artifact from local directories to avoid inclusion in zip or distribution archives.
+
+---
+
+## [v1.3.2] - 2026-10-21
+
+### Documentation & Deprecation
+- **Formal v2 Migration Banner:** Added `Deprecated: Use github.com/KaikeGM/zerojwt/v2 instead.` to root package documentation in `jwt.go` to display official migration banner on `pkg.go.dev` and in Go IDEs/toolchain.
+- **Absolute pkg.go.dev Redirection:** Updated root `README.md` and `README_pt-BR.md` banner links from relative paths to canonical `https://pkg.go.dev/github.com/KaikeGM/zerojwt/v2`.
+
+---
+
 ## [v2.0.0] - 2026-10-21
 
 ### Added

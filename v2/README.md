@@ -63,7 +63,7 @@ High-performance, zero-allocation JWT signing, verification, and JSON property s
 
 2. **Secure by Default Constructor**
    - `New(secret, ...Options)` is strictly secure out of the box:
-     - **RFC 7518 §3.2**: Rejects secrets shorter than the algorithm hash length (32 bytes for HS256, 48 for HS384, 64 for HS512) with `ErrInsecureSecret`.
+     - **RFC 7518 §3.2**: Rejects secrets shorter than the algorithm hash length (32 bytes for HS256, 48 for HS384, 64 for HS512) with `ErrInvalidConfig` (or alias `ErrInsecureSecret`).
      - **OIDC Core 1.0 §3.1.3.7 / RFC 9068 §2.2**: Rejects tokens missing the `exp` claim with `ErrMissingExp`.
    - Explicit opt-out flags are provided for legacy migration: `Options{AllowShortSecret: true, AllowMissingExp: true}`.
 
@@ -367,7 +367,7 @@ for prop, err := range v.Iter(token, now) {
     if err != nil {
         panic(err) // Aborts if signature or temporal validation fails
     }
-    fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Value, prop.IsString)
+    fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Val, prop.IsStr)
 }
 ```
 
@@ -496,7 +496,7 @@ if err := v.VerifyBearer([]byte(authHeader), now, &claims); err != nil {
 3. **Mandatory Expiration Enforcement**:  
    By default, tokens missing `exp` are rejected (`ErrMissingExp`), complying with OIDC Core 1.0 §3.1.3.7 and RFC 9068 §2.2.
 4. **Secret Length Enforcement**:  
-   Secrets shorter than the hash length are rejected at initialization with `ErrInsecureSecret` per RFC 7518 §3.2.
+   Secrets shorter than the hash length are rejected at initialization with `ErrInvalidConfig` (`ErrInsecureSecret`) per RFC 7518 §3.2.
 
 ---
 

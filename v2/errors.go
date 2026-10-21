@@ -58,6 +58,7 @@ var (
 	ErrMissingBearer = errors.New("zerojwt: missing or invalid Bearer prefix")
 
 	// Compatibility aliases for v1 error identifiers
-	ErrExpiredToken = ErrTokenExpired
-	ErrNotValidYet  = ErrTokenNotValidYet
+	ErrExpiredToken   = ErrTokenExpired
+	ErrNotValidYet    = ErrTokenNotValidYet
+	ErrInsecureSecret = ErrInvalidConfig
 )

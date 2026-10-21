@@ -136,6 +136,10 @@ func TestREADMEExamples(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Iter error: %v", err)
 		}
+		_ = prop.Val
+		_ = prop.IsStr
+		_ = prop.Value()
+		_ = prop.IsString()
 		if len(prop.Key) > 0 {
 			count++
 		}

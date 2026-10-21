@@ -128,6 +128,18 @@ func TestStudyPrimitives(t *testing.T) {
 	}
 
 	// VerifySplit error cases
+	if err := v.VerifySplit([]byte("head\n."), []byte("tail.sig"), now, &claims); err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken on LF in head, got %v", err)
+	}
+	if err := v.VerifySplit([]byte("head\r."), []byte("tail.sig"), now, &claims); err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken on CR in head, got %v", err)
+	}
+	if err := v.VerifySplit([]byte("head."), []byte("tail\n.sig"), now, &claims); err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken on LF in tail, got %v", err)
+	}
+	if err := v.VerifySplit([]byte("head."), []byte("tail\r.sig"), now, &claims); err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken on CR in tail, got %v", err)
+	}
 	if err := v.VerifySplit([]byte("not.a.valid"), []byte("token.extra.dot"), now, &claims); err == nil {
 		t.Fatal("expected error on extra dots in tail")
 	}

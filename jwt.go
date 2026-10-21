@@ -1,5 +1,7 @@
 // Package zerojwt provides an ultra-fast, zero-allocation (0 B/op, 0 allocs/op)
 // JWT validator and signer in pure Go supporting HS256, HS384, HS512, EdDSA (Ed25519), and ES256.
+//
+// Deprecated: Use github.com/KaikeGM/zerojwt/v2 instead.
 package zerojwt
 
 import (

@@ -35,6 +35,9 @@ func TestSecureDefaults(t *testing.T) {
 	if !errors.Is(err, zerojwt.ErrInvalidConfig) {
 		t.Fatalf("expected ErrInvalidConfig, got %v", err)
 	}
+	if !errors.Is(err, zerojwt.ErrInsecureSecret) {
+		t.Fatalf("expected ErrInsecureSecret alias, got %v", err)
+	}
 
 	validSecret := bytes.Repeat([]byte("s"), 32)
 	v, err = zerojwt.New(validSecret)
