@@ -75,6 +75,9 @@ func TestForwardAuthHandler(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 Unauthorized for missing auth, got %d", rec.Code)
 	}
+	if rec.Header().Get("WWW-Authenticate") != `Bearer error="unauthorized"` {
+		t.Fatalf("expected WWW-Authenticate header, got %q", rec.Header().Get("WWW-Authenticate"))
+	}
 
 	// 4. Invalid / expired Bearer token -> 401
 	req = httptest.NewRequest("GET", "/auth", nil)
@@ -83,6 +86,9 @@ func TestForwardAuthHandler(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 Unauthorized for invalid token, got %d", rec.Code)
+	}
+	if rec.Header().Get("WWW-Authenticate") != `Bearer error="unauthorized"` {
+		t.Fatalf("expected WWW-Authenticate header, got %q", rec.Header().Get("WWW-Authenticate"))
 	}
 
 	// 5. Custom header extraction

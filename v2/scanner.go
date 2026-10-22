@@ -158,88 +158,113 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		}
 		val = b[vStart:i]
 		return val, true, i + 1, true
-	}
-
-	// Boolean or Null
-	if b[i] == 't' && i+4 <= n && bytes.Equal(b[i:i+4], []byte("true")) {
-		return b[i : i+4], false, i + 4, true
-	}
-	if b[i] == 'f' && i+5 <= n && bytes.Equal(b[i:i+5], []byte("false")) {
-		return b[i : i+5], false, i + 5, true
-	}
-	if b[i] == 'n' && i+4 <= n && bytes.Equal(b[i:i+4], []byte("null")) {
-		return b[i : i+4], false, i + 4, true
-	}
-
-	// Numbers
-	if b[i] == '-' || (b[i] >= '0' && b[i] <= '9') {
-		vStart := i
-		i++
-		for i < n && !numEndLut[b[i]] && !wsLut[b[i]] {
-			i++
+	} else if b[i] == '{' || b[i] == '[' {
+		var stack [32]byte
+		sp := 0
+		if b[i] == '{' {
+			stack[sp] = '}'
+		} else {
+			stack[sp] = ']'
 		}
-		return b[vStart:i], false, i, true
-	}
-
-	// Nested object
-	if b[i] == '{' {
+		sp++
 		vStart := i
-		depth := 1
 		i++
-		inStr := false
-		for i < n && depth > 0 {
-			if inStr {
-				if b[i] == '\\' {
+		inS := false
+		for i < n && sp > 0 {
+			c := b[i]
+			if inS {
+				if c == '\\' {
 					i += 2
 					continue
 				}
-				if b[i] == '"' {
-					inStr = false
+				if c == '"' {
+					inS = false
 				}
-			} else {
-				if b[i] == '"' {
-					inStr = true
-				} else if b[i] == '{' {
-					depth++
-				} else if b[i] == '}' {
-					depth--
+				i++
+				continue
+			}
+			switch c {
+			case '"':
+				inS = true
+			case '{':
+				if sp >= len(stack) {
+					return nil, false, 0, false
+				}
+				stack[sp] = '}'
+				sp++
+			case '[':
+				if sp >= len(stack) {
+					return nil, false, 0, false
+				}
+				stack[sp] = ']'
+				sp++
+			case '}', ']':
+				sp--
+				if stack[sp] != c {
+					return nil, false, 0, false
 				}
 			}
 			i++
 		}
-		if depth != 0 {
+		if sp != 0 {
 			return nil, false, 0, false
 		}
 		return b[vStart:i], false, i, true
-	}
-
-	// Nested array
-	if b[i] == '[' {
-		vStart := i
-		depth := 1
-		i++
-		inStr := false
-		for i < n && depth > 0 {
-			if inStr {
-				if b[i] == '\\' {
-					i += 2
-					continue
-				}
-				if b[i] == '"' {
-					inStr = false
-				}
-			} else {
-				if b[i] == '"' {
-					inStr = true
-				} else if b[i] == '[' {
-					depth++
-				} else if b[i] == ']' {
-					depth--
-				}
-			}
-			i++
+	} else if b[i] == 't' {
+		if i+4 <= n && b[i+1] == 'r' && b[i+2] == 'u' && b[i+3] == 'e' && (i+4 == n || numEndLut[b[i+4]]) {
+			return b[i : i+4], false, i + 4, true
 		}
-		if depth != 0 {
+		return nil, false, 0, false
+	} else if b[i] == 'f' {
+		if i+5 <= n && b[i+1] == 'a' && b[i+2] == 'l' && b[i+3] == 's' && b[i+4] == 'e' && (i+5 == n || numEndLut[b[i+5]]) {
+			return b[i : i+5], false, i + 5, true
+		}
+		return nil, false, 0, false
+	} else if b[i] == 'n' {
+		if i+4 <= n && b[i+1] == 'u' && b[i+2] == 'l' && b[i+3] == 'l' && (i+4 == n || numEndLut[b[i+4]]) {
+			return b[i : i+4], false, i + 4, true
+		}
+		return nil, false, 0, false
+	} else if b[i] == '-' || (b[i] >= '0' && b[i] <= '9') {
+		vStart := i
+		if b[i] == '-' {
+			i++
+			if i >= n || b[i] < '0' || b[i] > '9' {
+				return nil, false, 0, false
+			}
+		}
+		if b[i] == '0' {
+			i++
+			if i < n && b[i] >= '0' && b[i] <= '9' {
+				return nil, false, 0, false // leading zero forbidden
+			}
+		} else {
+			for i < n && b[i] >= '0' && b[i] <= '9' {
+				i++
+			}
+		}
+		if i < n && b[i] == '.' {
+			i++
+			if i >= n || b[i] < '0' || b[i] > '9' {
+				return nil, false, 0, false
+			}
+			for i < n && b[i] >= '0' && b[i] <= '9' {
+				i++
+			}
+		}
+		if i < n && (b[i] == 'e' || b[i] == 'E') {
+			i++
+			if i < n && (b[i] == '+' || b[i] == '-') {
+				i++
+			}
+			if i >= n || b[i] < '0' || b[i] > '9' {
+				return nil, false, 0, false
+			}
+			for i < n && b[i] >= '0' && b[i] <= '9' {
+				i++
+			}
+		}
+		if i < n && !numEndLut[b[i]] {
 			return nil, false, 0, false
 		}
 		return b[vStart:i], false, i, true

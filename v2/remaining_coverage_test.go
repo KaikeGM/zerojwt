@@ -129,8 +129,8 @@ func TestRemainingCoverage(t *testing.T) {
 	if err := v.VerifyAndIterate(tokExpStr, now, nil); !errors.Is(err, ErrInvalidPayload) {
 		t.Fatalf("expected ErrInvalidPayload for exp as string, got %v", err)
 	}
-	// Exp invalid numeric
-	tokExpBadNum, _ := v.Sign(nil, []byte(`{"exp":123bad}`))
+	// Exp invalid numeric (e.g. boolean)
+	tokExpBadNum, _ := v.Sign(nil, []byte(`{"exp":true}`))
 	if err := v.VerifyAndIterate(tokExpBadNum, now, nil); !errors.Is(err, ErrInvalidPayload) {
 		t.Fatalf("expected ErrInvalidPayload for invalid exp number, got %v", err)
 	}
@@ -144,8 +144,8 @@ func TestRemainingCoverage(t *testing.T) {
 	if err := v.VerifyAndIterate(tokNbfStr, now, nil); !errors.Is(err, ErrInvalidPayload) {
 		t.Fatalf("expected ErrInvalidPayload for nbf as string, got %v", err)
 	}
-	// Nbf invalid numeric
-	tokNbfBadNum, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"nbf":123bad}`, now+1000)))
+	// Nbf invalid numeric (e.g. boolean)
+	tokNbfBadNum, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"nbf":true}`, now+1000)))
 	if err := v.VerifyAndIterate(tokNbfBadNum, now, nil); !errors.Is(err, ErrInvalidPayload) {
 		t.Fatalf("expected ErrInvalidPayload for invalid nbf number, got %v", err)
 	}

@@ -109,4 +109,62 @@ func TestScannerDeepCoverage(t *testing.T) {
 	if string(prop.Value()) != "bar" || !prop.IsString() {
 		t.Fatalf("unexpected JSONProp helper result: val=%s isStr=%v", prop.Value(), prop.IsString())
 	}
+
+	// 7. Scanner strictness and rigor (RFC 8259 number validation and bracket balance)
+	// Depth limit 32
+	deepObj := bytes.Repeat([]byte(`{"a":`), 35)
+	deepObj = append(deepObj, []byte(`1`)...)
+	deepObj = append(deepObj, bytes.Repeat([]byte(`}`), 35)...)
+	if _, _, _, _, ok := zerojwt.NextJSONProp(deepObj[1 : len(deepObj)-1]); ok {
+		t.Fatal("expected false for object nesting > 32")
+	}
+
+	deepArr := bytes.Repeat([]byte(`[`), 35)
+	deepArr = append(deepArr, []byte(`1`)...)
+	deepArr = append(deepArr, bytes.Repeat([]byte(`]`), 35)...)
+	if _, _, _, _, ok := zerojwt.NextJSONProp(append([]byte(`"a":`), deepArr...)); ok {
+		t.Fatal("expected false for array nesting > 32")
+	}
+
+	// Mismatched brackets
+	if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"a": [1}`)); ok {
+		t.Fatal("expected false for mismatched bracket [1}")
+	}
+	if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"a": {"b": 1]`)); ok {
+		t.Fatal("expected false for mismatched bracket {1]")
+	}
+
+	// Invalid true / false / null literals
+	if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"a": truX`)); ok {
+		t.Fatal("expected false for invalid true literal")
+	}
+	if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"a": falsX`)); ok {
+		t.Fatal("expected false for invalid false literal")
+	}
+	if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"a": nulX`)); ok {
+		t.Fatal("expected false for invalid null literal")
+	}
+
+	// Number validation: leading zero, incomplete minus, decimal, exponent, trailing garbage
+	badNumbers := []string{
+		"-", "-a", "01", "00", "1.", "1.a", "1e", "1e+", "1e-", "1ea", "1a",
+	}
+	for _, badNum := range badNumbers {
+		if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"n": ` + badNum)); ok {
+			t.Fatalf("expected false for bad number %q", badNum)
+		}
+	}
+
+	// Multi-digit decimal and exponent in scanJSONValue
+	if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"val": 12.3456`)); !ok {
+		t.Fatal("expected ok for multi-digit decimal")
+	}
+	if _, _, _, _, ok := zerojwt.NextJSONProp([]byte(`"val": 12e345`)); !ok {
+		t.Fatal("expected ok for multi-digit exponent")
+	}
+
+	// ParseJSONNumber trailing characters check
+	if _, ok := zerojwt.ParseJSONNumber([]byte("123abc")); ok {
+		t.Fatal("expected false for ParseJSONNumber with trailing chars")
+	}
 }

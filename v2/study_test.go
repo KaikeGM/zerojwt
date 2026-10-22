@@ -149,6 +149,9 @@ func TestStudyPrimitives(t *testing.T) {
 	if err := v.VerifySplit([]byte("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig"), []byte(".extra"), now, &claims); err == nil {
 		t.Fatal("expected error on extra dot in tail for Case 1")
 	}
+	if err := v.VerifySplit([]byte("a.b.c.d"), []byte("sig"), now, &claims); err != ErrInvalidToken {
+		t.Fatalf("expected ErrInvalidToken on extra dot in head for Case 1, got %v", err)
+	}
 
 	// 3. Test WorkerScratchGroup
 	numWorkers := 8

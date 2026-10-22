@@ -54,7 +54,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 		}
 
 		var (
-			kty, kid, crv, k, x, y []byte
+			kty, kid, crv, k, x, y, use []byte
 		)
 		for len(elemObj) > 0 {
 			propKey, propVal, isStr, restProp, ok := NextJSONProp(elemObj)
@@ -66,11 +66,15 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				continue
 			}
 			if bytes.IndexByte(propVal, '\\') >= 0 {
-				propVal = UnescapeJSONInPlace(propVal)
+				buf := make([]byte, len(propVal))
+				copy(buf, propVal)
+				propVal = UnescapeJSONInPlace(buf)
 			}
 			switch string(propKey) {
 			case "kty":
 				kty = propVal
+			case "use":
+				use = propVal
 			case "kid":
 				kid = propVal
 			case "crv":
@@ -84,13 +88,13 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 			}
 		}
 
-		if len(kid) == 0 {
-			return nil, ErrInvalidJWKS
+		if string(use) == "enc" {
+			continue
 		}
 
 		switch string(kty) {
 		case "oct":
-			if len(k) == 0 {
+			if len(kid) == 0 || len(k) == 0 {
 				return nil, ErrInvalidJWKS
 			}
 			sec, err := decodeJWKSBase64(k)
@@ -102,7 +106,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				Secret: sec,
 			})
 		case "OKP":
-			if string(crv) != "Ed25519" || len(x) == 0 {
+			if len(kid) == 0 || string(crv) != "Ed25519" || len(x) == 0 {
 				return nil, ErrInvalidJWKS
 			}
 			pubBytes, err := decodeJWKSBase64(x)
@@ -114,7 +118,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				Ed25519Public: ed25519.PublicKey(pubBytes),
 			})
 		case "EC":
-			if string(crv) != "P-256" || len(x) == 0 || len(y) == 0 {
+			if len(kid) == 0 || string(crv) != "P-256" || len(x) == 0 || len(y) == 0 {
 				return nil, ErrInvalidJWKS
 			}
 			xBytes, err := decodeJWKSBase64(x)
@@ -139,10 +143,14 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				},
 			})
 		default:
-			return nil, ErrInvalidJWKS
+			// RFC 7517 §5: ignore unsupported key types (e.g. RSA) without failing the whole JWKS document.
+			continue
 		}
 	}
 
+	if len(res) == 0 {
+		return nil, ErrInvalidJWKS
+	}
 	return res, nil
 }
 

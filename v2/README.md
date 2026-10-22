@@ -364,10 +364,10 @@ buf = append(buf, '}')
 
 ### Atomic Claim Iteration (Go 1.23 `iter.Seq2` & `IterSplit`)
 
-Iterate over all custom and standard JSON properties in the verified payload with zero allocations:
+Iterate over all custom and standard JSON properties in the verified payload with zero heap allocations (**0 B/op, 0 allocs/op**):
 
 ```go
-// Contiguous token:
+// Contiguous token (0 B/op, 0 allocs/op):
 for prop, err := range v.Iter(token, now) {
     if err != nil {
         panic(err) // Aborts if signature or temporal validation fails
@@ -375,14 +375,23 @@ for prop, err := range v.Iter(token, now) {
     fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Val, prop.IsStr)
 }
 
-// Fragmented ring-buffer token (head + tail):
+// Fragmented ring-buffer token (head + tail) (0 B/op, 0 allocs/op):
 for prop, err := range v.IterSplit(head, tail, now) {
     if err != nil {
         panic(err)
     }
     fmt.Printf("Split Claim %s = %s\n", prop.Key, prop.Val)
 }
+
+// Worker-pinned path (bypasses sync.Pool to eliminate atomic CAS contention in event loops):
+scratch := workers.For(workerID)
+for prop, err := range v.IterWithScratch(token, now, scratch) {
+    // ...
+}
 ```
+
+> [!TIP]
+> Both `v.Iter` and `v.IterSplit` achieve **0 heap allocations (0 B/op, 0 allocs/op)** out of the box using internal memory recycling. For multi-core event-loop network engines (e.g. `gnet`), use `IterWithScratch` / `IterSplitWithScratch` with `WorkerScratchGroup` to eliminate even `sync.Pool` atomic CAS operations and CPU cache contention across cores.
 
 ---
 
@@ -634,6 +643,8 @@ The Go compiler automatically incorporates `default.pgo`, enabling aggressive fu
    Replace `Sign(dst, pl)` returning `[]byte` with `Sign(dst, pl) ([]byte, error)`. Rollback on failure is automatic.
 5. **Ensure Expiration**:
    Ensure issued tokens include `ExpiresAt > 0`. If legacy tokens without expiration must be accepted, pass `Options{AllowMissingExp: true}`.
+6. **Key ID Enforcement (`kid`)**:
+   Tokens containing a `kid` header now require a matching key in `Keys` or registered via `UpdateKeys` / JWKS. If the `kid` is unknown, `Verify` returns `ErrUnknownKeyID` immediately.
 
 ---
 

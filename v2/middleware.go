@@ -110,6 +110,11 @@ func (v *Verifier) ForwardAuthHandler(opts ...ForwardAuthOptions) http.HandlerFu
 			now    = time.Now().Unix()
 		)
 
+		unauthorized := func() {
+			w.Header().Set("WWW-Authenticate", `Bearer error="unauthorized"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		}
+
 		auth := r.Header.Get("Authorization")
 		if len(auth) > len(bearerPrefix) {
 			authBytes := unsafe.Slice(unsafe.StringData(auth), len(auth))
@@ -123,16 +128,16 @@ func (v *Verifier) ForwardAuthHandler(opts ...ForwardAuthOptions) http.HandlerFu
 				tokBytes := unsafe.Slice(unsafe.StringData(cookie.Value), len(cookie.Value))
 				err = v.Verify(tokBytes, now, &claims)
 			} else {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				unauthorized()
 				return
 			}
 		} else {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			unauthorized()
 			return
 		}
 
 		if err != nil {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			unauthorized()
 			return
 		}
 

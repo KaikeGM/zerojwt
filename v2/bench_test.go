@@ -129,6 +129,59 @@ func TestZeroAllocations(t *testing.T) {
 	if edVerifyAllocs != 0 {
 		t.Fatalf("expected 0 allocs in EdDSA Verify, got %v", edVerifyAllocs)
 	}
+
+	// 7. IterWithScratch and IterSplitWithScratch: 0 allocs
+	st := v.NewScratch()
+	iterAllocs := testing.AllocsPerRun(100, func() {
+		for prop, err := range v.IterWithScratch(tok, now, st) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = prop
+		}
+	})
+	if iterAllocs != 0 {
+		t.Fatalf("expected 0 allocs in IterWithScratch, got %v", iterAllocs)
+	}
+
+	splitCut := len(tok) / 2
+	head, tail := tok[:splitCut], tok[splitCut:]
+	splitIterAllocs := testing.AllocsPerRun(100, func() {
+		for prop, err := range v.IterSplitWithScratch(head, tail, now, st) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = prop
+		}
+	})
+	if splitIterAllocs != 0 {
+		t.Fatalf("expected 0 allocs in IterSplitWithScratch, got %v", splitIterAllocs)
+	}
+
+	// 8. Iter and IterSplit convenience methods: 0 allocs
+	iterConvenienceAllocs := testing.AllocsPerRun(100, func() {
+		for prop, err := range v.Iter(tok, now) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = prop
+		}
+	})
+	if iterConvenienceAllocs != 0 {
+		t.Fatalf("expected 0 allocs in Iter, got %v", iterConvenienceAllocs)
+	}
+
+	splitConvenienceAllocs := testing.AllocsPerRun(100, func() {
+		for prop, err := range v.IterSplit(head, tail, now) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = prop
+		}
+	})
+	if splitConvenienceAllocs != 0 {
+		t.Fatalf("expected 0 allocs in IterSplit, got %v", splitConvenienceAllocs)
+	}
 }
 
 func BenchmarkVerifyHS256(b *testing.B) {

@@ -301,7 +301,7 @@ func NewWithOptions(secret []byte, opts Options) (*Verifier, error) {
 	return New(secret, opts)
 }
 
-// NewSecureVerifier is a convenience alias for New in v2.
+// Deprecated: Use New instead. NewSecureVerifier is a convenience alias for New in v2.
 func NewSecureVerifier(secret []byte, opts ...Options) (*Verifier, error) {
 	return New(secret, opts...)
 }
@@ -892,12 +892,12 @@ func (v *Verifier) SignClaimsWithScratch(dst []byte, claims StandardClaims, st *
 	return v.SignWithScratch(dst, b, st)
 }
 
-// TrySign is a compatibility alias for Sign in v2.
+// Deprecated: Use Sign instead. TrySign is a compatibility alias for Sign in v2.
 func (v *Verifier) TrySign(dst []byte, payloadJSON []byte) ([]byte, error) {
 	return v.Sign(dst, payloadJSON)
 }
 
-// TrySignClaims is a compatibility alias for SignClaims in v2.
+// Deprecated: Use SignClaims instead. TrySignClaims is a compatibility alias for SignClaims in v2.
 func (v *Verifier) TrySignClaims(dst []byte, sub, username []byte, iat, exp int64) ([]byte, error) {
 	return v.SignClaims(dst, StandardClaims{
 		Subject:   string(sub),
@@ -926,10 +926,10 @@ func (v *Verifier) VerifyWithScratch(tok []byte, nowUnix int64, out *Claims, st 
 	return v.parseStandardClaims(plBytes, nowUnix, out)
 }
 
-// VerifyBearer strips the "Bearer " prefix from an HTTP Authorization header
-// and verifies the token with zero heap allocations.
+// VerifyBearer strips the "Bearer " prefix (case-insensitively per RFC 7235 / RFC 6750)
+// from an HTTP Authorization header and verifies the token with zero heap allocations.
 func (v *Verifier) VerifyBearer(authHeader []byte, nowUnix int64, out *Claims) error {
-	if !bytes.HasPrefix(authHeader, bearerPrefix) {
+	if len(authHeader) < len(bearerPrefix) || !bytes.EqualFold(authHeader[:len(bearerPrefix)], bearerPrefix) {
 		return ErrMissingBearer
 	}
 	return v.Verify(authHeader[len(bearerPrefix):], nowUnix, out)

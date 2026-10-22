@@ -93,6 +93,31 @@ func TestStudyZeroAllocations(t *testing.T) {
 	if splitIterAllocs != 0 {
 		t.Fatalf("expected 0 allocs in VerifySplitAndIterateWithScratch, got %v", splitIterAllocs)
 	}
+
+	// 6. Iter and IterSplit: 0 allocs
+	iterAllocs := testing.AllocsPerRun(100, func() {
+		for prop, err := range v.Iter(tokenBytes, now) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = prop
+		}
+	})
+	if iterAllocs != 0 {
+		t.Fatalf("expected 0 allocs in Iter, got %v", iterAllocs)
+	}
+
+	iterSplitAllocs := testing.AllocsPerRun(100, func() {
+		for prop, err := range v.IterSplit(iov[0], iov[1], now) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = prop
+		}
+	})
+	if iterSplitAllocs != 0 {
+		t.Fatalf("expected 0 allocs in IterSplit, got %v", iterSplitAllocs)
+	}
 }
 
 func BenchmarkSignHS256_Standard(b *testing.B) {

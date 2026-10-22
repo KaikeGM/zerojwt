@@ -133,8 +133,8 @@ func (v *Verifier) IterWithScratch(tok []byte, now int64, st *Scratch) iter.Seq2
 func (v *Verifier) Iter(tok []byte, now int64) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
 		st := v.acquireScratch()
-		defer v.releaseScratch(st)
 		v.IterWithScratch(tok, now, st)(yield)
+		v.releaseScratch(st)
 	}
 }
 
@@ -147,8 +147,8 @@ func (v *Verifier) Iter(tok []byte, now int64) iter.Seq2[JSONProp, error] {
 func (v *Verifier) IterSplit(head, tail []byte, now int64) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
 		st := v.acquireScratch()
-		defer v.releaseScratch(st)
 		v.IterSplitWithScratch(head, tail, now, st)(yield)
+		v.releaseScratch(st)
 	}
 }
 

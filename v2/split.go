@@ -170,7 +170,7 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 			pLen = len(p1)
 			s1 = restHead[dot2Head+1:]
 			s2 = tail
-			if bytes.IndexByte(tail, '.') >= 0 {
+			if bytes.IndexByte(s1, '.') >= 0 || bytes.IndexByte(tail, '.') >= 0 {
 				return nil, ErrInvalidToken
 			}
 			signingPart1 = head[:dot1+1+dot2Head]

@@ -156,6 +156,18 @@ func TestComprehensiveEdgeCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VerifyBearer failed: %v", err)
 	}
+	// Case-insensitivity per RFC 7235 / RFC 6750
+	lowerBearerTok := append([]byte("bearer "), tokBuilder...)
+	if err := v.VerifyBearer(lowerBearerTok, now, &c); err != nil {
+		t.Fatalf("VerifyBearer failed with lowercase prefix: %v", err)
+	}
+	upperBearerTok := append([]byte("BEARER "), tokBuilder...)
+	if err := v.VerifyBearer(upperBearerTok, now, &c); err != nil {
+		t.Fatalf("VerifyBearer failed with uppercase prefix: %v", err)
+	}
+	if err := v.VerifyBearer([]byte("Bear"), now, &c); !errors.Is(err, zerojwt.ErrMissingBearer) {
+		t.Fatalf("expected ErrMissingBearer for short prefix, got %v", err)
+	}
 	if err := v.VerifyBearer([]byte("InvalidPrefix token"), now, &c); !errors.Is(err, zerojwt.ErrMissingBearer) {
 		t.Fatalf("expected ErrMissingBearer, got %v", err)
 	}

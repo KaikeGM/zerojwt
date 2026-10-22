@@ -1,6 +1,7 @@
 package zerojwt
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -280,5 +281,52 @@ func TestUpdateKeys_EdgeCases(t *testing.T) {
 	// UpdateKeysFromJWKS with invalid JWKS
 	if err := v2.UpdateKeysFromJWKS([]byte("invalid-jwks")); err == nil {
 		t.Error("expected error for invalid JWKS in UpdateKeysFromJWKS")
+	}
+}
+
+func TestJWKS_BufferImmutability(t *testing.T) {
+	// A JWKS containing an escaped kid string like "k\"ey\\1"
+	raw := []byte(`{"keys":[{"kty":"oct","kid":"k\"ey\\1","k":"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"}]}`)
+	rawCopy := make([]byte, len(raw))
+	copy(rawCopy, raw)
+
+	keys, err := ParseJWKS(raw)
+	if err != nil {
+		t.Fatalf("ParseJWKS failed: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if !bytes.Equal(raw, rawCopy) {
+		t.Fatalf("ParseJWKS mutated input buffer: before=%q, after=%q", string(rawCopy), string(raw))
+	}
+}
+
+func TestJWKS_RFC7517_Interoperability(t *testing.T) {
+	// JWKS containing an RSA key, an encryption key ("use": "enc"), and a valid oct key
+	mixedJWKS := []byte(`{
+		"keys": [
+			{"kty": "RSA", "kid": "rsa-1", "n": "abc", "e": "AQAB"},
+			{"kty": "oct", "kid": "enc-key", "use": "enc", "k": "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"},
+			{"kty": "oct", "kid": "sig-key", "use": "sig", "k": "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"}
+		]
+	}`)
+	keys, err := ParseJWKS(mixedJWKS)
+	if err != nil {
+		t.Fatalf("ParseJWKS failed on mixed JWKS: %v", err)
+	}
+	if len(keys) != 1 || keys[0].ID != "sig-key" {
+		t.Fatalf("expected 1 valid key with ID 'sig-key', got %+v", keys)
+	}
+
+	// JWKS with only unsupported keys or enc keys -> ErrInvalidJWKS
+	onlyRSA := []byte(`{"keys":[{"kty":"RSA","kid":"rsa-1","n":"abc"}]}`)
+	if _, err := ParseJWKS(onlyRSA); err != ErrInvalidJWKS {
+		t.Fatalf("expected ErrInvalidJWKS for RSA-only JWKS, got %v", err)
+	}
+
+	onlyEnc := []byte(`{"keys":[{"kty":"oct","kid":"e1","use":"enc","k":"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"}]}`)
+	if _, err := ParseJWKS(onlyEnc); err != ErrInvalidJWKS {
+		t.Fatalf("expected ErrInvalidJWKS for enc-only JWKS, got %v", err)
 	}
 }
