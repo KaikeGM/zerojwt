@@ -157,31 +157,6 @@ func TestZeroAllocations(t *testing.T) {
 	if splitIterAllocs != 0 {
 		t.Fatalf("expected 0 allocs in IterSplitWithScratch, got %v", splitIterAllocs)
 	}
-
-	// 8. Iter and IterSplit convenience methods: 0 allocs
-	iterConvenienceAllocs := testing.AllocsPerRun(100, func() {
-		for prop, err := range v.Iter(tok, now) {
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = prop
-		}
-	})
-	if iterConvenienceAllocs != 0 {
-		t.Fatalf("expected 0 allocs in Iter, got %v", iterConvenienceAllocs)
-	}
-
-	splitConvenienceAllocs := testing.AllocsPerRun(100, func() {
-		for prop, err := range v.IterSplit(head, tail, now) {
-			if err != nil {
-				t.Fatal(err)
-			}
-			_ = prop
-		}
-	})
-	if splitConvenienceAllocs != 0 {
-		t.Fatalf("expected 0 allocs in IterSplit, got %v", splitConvenienceAllocs)
-	}
 }
 
 func BenchmarkVerifyHS256(b *testing.B) {

@@ -364,34 +364,31 @@ buf = append(buf, '}')
 
 ### Atomic Claim Iteration (Go 1.23 `iter.Seq2` & `IterSplit`)
 
-Iterate over all custom and standard JSON properties in the verified payload with zero heap allocations (**0 B/op, 0 allocs/op**):
+Iterate over all custom and standard JSON properties in the verified payload with zero allocations using `IterWithScratch` and `IterSplitWithScratch`:
 
 ```go
-// Contiguous token (0 B/op, 0 allocs/op):
-for prop, err := range v.Iter(token, now) {
+// Zero-allocation path (0 B/op, 0 allocs/op with worker/reusable scratch):
+scratch := workers.For(workerID) // or v.NewScratch()
+
+// Contiguous token:
+for prop, err := range v.IterWithScratch(token, now, scratch) {
     if err != nil {
         panic(err) // Aborts if signature or temporal validation fails
     }
     fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Val, prop.IsStr)
 }
 
-// Fragmented ring-buffer token (head + tail) (0 B/op, 0 allocs/op):
-for prop, err := range v.IterSplit(head, tail, now) {
+// Fragmented ring-buffer token (head + tail):
+for prop, err := range v.IterSplitWithScratch(head, tail, now, scratch) {
     if err != nil {
         panic(err)
     }
     fmt.Printf("Split Claim %s = %s\n", prop.Key, prop.Val)
 }
-
-// Worker-pinned path (bypasses sync.Pool to eliminate atomic CAS contention in event loops):
-scratch := workers.For(workerID)
-for prop, err := range v.IterWithScratch(token, now, scratch) {
-    // ...
-}
 ```
 
-> [!TIP]
-> Both `v.Iter` and `v.IterSplit` achieve **0 heap allocations (0 B/op, 0 allocs/op)** out of the box using internal memory recycling. For multi-core event-loop network engines (e.g. `gnet`), use `IterWithScratch` / `IterSplitWithScratch` with `WorkerScratchGroup` to eliminate even `sync.Pool` atomic CAS operations and CPU cache contention across cores.
+> [!NOTE]
+> For convenience, `v.Iter(token, now)` and `v.IterSplit(head, tail, now)` are also provided without requiring an explicit scratch pointer; they dynamically acquire workspaces via `sync.Pool` (~3 allocs/op due to closure capture). Use `IterWithScratch` / `IterSplitWithScratch` for guaranteed zero heap allocations on high-throughput hot paths.
 
 ---
 

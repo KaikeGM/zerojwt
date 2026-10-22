@@ -155,16 +155,17 @@ func (v *Verifier) IterSplit(head, tail []byte, now int64) iter.Seq2[JSONProp, e
 // IterSplitWithScratch is identical to IterSplit but uses a caller-supplied Scratch state.
 func (v *Verifier) IterSplitWithScratch(head, tail []byte, now int64, st *Scratch) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
+		var (
+			plBytes []byte
+			err     error
+		)
 		if len(head) == 0 {
-			v.IterWithScratch(tail, now, st)(yield)
-			return
+			plBytes, err = v.verifySignatureAndDecodePayload(tail, st)
+		} else if len(tail) == 0 {
+			plBytes, err = v.verifySignatureAndDecodePayload(head, st)
+		} else {
+			plBytes, err = v.verifySplitSignatureAndDecodePayload(head, tail, st)
 		}
-		if len(tail) == 0 {
-			v.IterWithScratch(head, now, st)(yield)
-			return
-		}
-
-		plBytes, err := v.verifySplitSignatureAndDecodePayload(head, tail, st)
 		if err != nil {
 			yield(JSONProp{}, err)
 			return

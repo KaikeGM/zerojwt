@@ -364,34 +364,31 @@ buf = append(buf, '}')
 
 ### Iterador Atômico de Claims (Go 1.23 `iter.Seq2` & `IterSplit`)
 
-Itera sobre todas as propriedades JSON padrão e customizadas no payload verificado com zero alocações na heap (**0 B/op, 0 allocs/op**):
+Itera sobre todas as propriedades JSON padrão e customizadas no payload verificado com zero alocações na heap usando `IterWithScratch` e `IterSplitWithScratch`:
 
 ```go
-// Token contíguo (0 B/op, 0 allocs/op):
-for prop, err := range v.Iter(token, now) {
+// Caminho de zero alocações (0 B/op, 0 allocs/op com scratch reutilizável/por worker):
+scratch := workers.For(workerID) // ou v.NewScratch()
+
+// Token contíguo:
+for prop, err := range v.IterWithScratch(token, now, scratch) {
     if err != nil {
         panic(err) // Aborta se a assinatura ou validação temporal falhar
     }
     fmt.Printf("Claim %s = %s (isString: %v)\n", prop.Key, prop.Val, prop.IsStr)
 }
 
-// Token fragmentado em buffer circular (head + tail) (0 B/op, 0 allocs/op):
-for prop, err := range v.IterSplit(head, tail, now) {
+// Token fragmentado em buffer circular (head + tail):
+for prop, err := range v.IterSplitWithScratch(head, tail, now, scratch) {
     if err != nil {
         panic(err)
     }
     fmt.Printf("Claim Fragmentada %s = %s\n", prop.Key, prop.Val)
 }
-
-// Caminho afunilado por worker (elimina contenção de sync.Pool / CAS em event loops):
-scratch := workers.For(workerID)
-for prop, err := range v.IterWithScratch(token, now, scratch) {
-    // ...
-}
 ```
 
-> [!TIP]
-> Tanto `v.Iter` quanto `v.IterSplit` entregam **0 alocações na heap (0 B/op, 0 allocs/op)** nativamente via reciclagem interna de memória. Para servidores de rede orientados a eventos (ex.: `gnet`), use `IterWithScratch` / `IterSplitWithScratch` com o `WorkerScratchGroup` para eliminar até mesmo operações atômicas de CAS do `sync.Pool` e contenção de cache L1/L2 entre cores de CPU.
+> [!NOTE]
+> Por conveniência, `v.Iter(token, now)` e `v.IterSplit(head, tail, now)` também são fornecidos sem exigir um ponteiro de scratch explícito; eles adquirem workspaces dinamicamente via `sync.Pool` (~3 allocs/op devido à captura da closure). Use `IterWithScratch` / `IterSplitWithScratch` para garantir 0 alocações na heap no *hot path*.
 
 ---
 

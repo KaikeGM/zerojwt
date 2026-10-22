@@ -94,9 +94,9 @@ func TestStudyZeroAllocations(t *testing.T) {
 		t.Fatalf("expected 0 allocs in VerifySplitAndIterateWithScratch, got %v", splitIterAllocs)
 	}
 
-	// 6. Iter and IterSplit: 0 allocs
+	// 6. IterWithScratch and IterSplitWithScratch: 0 allocs
 	iterAllocs := testing.AllocsPerRun(100, func() {
-		for prop, err := range v.Iter(tokenBytes, now) {
+		for prop, err := range v.IterWithScratch(tokenBytes, now, workerScratch) {
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,11 +104,11 @@ func TestStudyZeroAllocations(t *testing.T) {
 		}
 	})
 	if iterAllocs != 0 {
-		t.Fatalf("expected 0 allocs in Iter, got %v", iterAllocs)
+		t.Fatalf("expected 0 allocs in IterWithScratch, got %v", iterAllocs)
 	}
 
 	iterSplitAllocs := testing.AllocsPerRun(100, func() {
-		for prop, err := range v.IterSplit(iov[0], iov[1], now) {
+		for prop, err := range v.IterSplitWithScratch(iov[0], iov[1], now, workerScratch) {
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +116,7 @@ func TestStudyZeroAllocations(t *testing.T) {
 		}
 	})
 	if iterSplitAllocs != 0 {
-		t.Fatalf("expected 0 allocs in IterSplit, got %v", iterSplitAllocs)
+		t.Fatalf("expected 0 allocs in IterSplitWithScratch, got %v", iterSplitAllocs)
 	}
 }
 
