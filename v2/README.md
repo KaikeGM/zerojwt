@@ -388,7 +388,7 @@ for prop, err := range v.IterSplitWithScratch(head, tail, now, scratch) {
 ```
 
 > [!NOTE]
-> For convenience, `v.Iter(token, now)` and `v.IterSplit(head, tail, now)` are also provided without requiring an explicit scratch pointer; they dynamically acquire workspaces via `sync.Pool` (~3 allocs/op due to closure capture). Use `IterWithScratch` / `IterSplitWithScratch` for guaranteed zero heap allocations on high-throughput hot paths.
+> For convenience, `v.Iter(token, now)` and `v.IterSplit(head, tail, now)` are also provided without requiring an explicit scratch pointer; they dynamically acquire workspaces via `sync.Pool` (~3 allocs/op in Go 1.23; 0 in Go 1.24+). Use `IterWithScratch` / `IterSplitWithScratch` for guaranteed zero heap allocations across all Go versions (Go 1.23+).
 
 ---
 
@@ -583,7 +583,7 @@ http:
 1. **`Destroy()` Memory Zeroing**:  
    Calling `v.Destroy()` marks the verifier as destroyed and zeroes out private keys and HMAC secrets with `0x00`. Subsequent calls fail closed with `ErrVerifierDestroyed`.
 2. **Strict RFC 8259 Top-Level Header Parsing**:  
-   Pre-authentication checks reject malformed headers, duplicate commas (`,,`), and invalid syntax before running cryptographic operations.
+   Pre-authentication checks validate separators, numbers, and JSON structure (rejecting malformed headers, duplicate/trailing commas like `,,`, invalid numbers, and mismatched brackets) before running cryptographic operations. Note: it does not validate inner string content (e.g. raw control characters or invalid string escape sequences).
 3. **Mandatory Expiration Enforcement**:  
    By default, tokens missing `exp` are rejected (`ErrMissingExp`), complying with OIDC Core 1.0 §3.1.3.7 and RFC 9068 §2.2.
 4. **Secret Length Enforcement**:  

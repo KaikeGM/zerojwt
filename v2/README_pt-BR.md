@@ -388,7 +388,7 @@ for prop, err := range v.IterSplitWithScratch(head, tail, now, scratch) {
 ```
 
 > [!NOTE]
-> Por conveniência, `v.Iter(token, now)` e `v.IterSplit(head, tail, now)` também são fornecidos sem exigir um ponteiro de scratch explícito; eles adquirem workspaces dinamicamente via `sync.Pool` (~3 allocs/op devido à captura da closure). Use `IterWithScratch` / `IterSplitWithScratch` para garantir 0 alocações na heap no *hot path*.
+> Por conveniência, `v.Iter(token, now)` e `v.IterSplit(head, tail, now)` também são fornecidos sem exigir um ponteiro de scratch explícito; eles adquirem workspaces dinamicamente via `sync.Pool` (~3 allocs/op no Go 1.23; 0 no Go 1.24+). Use `IterWithScratch` / `IterSplitWithScratch` para garantir 0 alocações na heap em todas as versões do Go (Go 1.23+).
 
 ---
 
@@ -583,7 +583,7 @@ http:
 1. **Zeragem de Memória com `Destroy()`**:  
    Chamar `v.Destroy()` invalida o verificador e sobrescreve chaves privadas e segredos HMAC com `0x00`. Chamadas subsequentes falham em modo fechado com `ErrVerifierDestroyed`.
 2. **Parser Estrito de Cabeçalho no Nível Superior (RFC 8259)**:  
-   Verificações pré-autenticação rejeitam cabeçalhos malformados, vírgulas duplicadas (`,,`) e sintaxe inválida antes de operações criptográficas.
+   Verificações pré-autenticação validam separadores, números e estrutura (rejeitando cabeçalhos malformados, vírgulas duplicadas/finais como `,,`, números inválidos e colchetes incompatíveis) antes de executar operações criptográficas. Nota: não valida o conteúdo interno das strings (ex.: caracteres de controle crus ou sequências de escape inválidas).
 3. **Exigência Obrigatória de Expiração**:  
    Por padrão, tokens sem `exp` são rejeitados (`ErrMissingExp`), em conformidade com OIDC Core 1.0 §3.1.3.7 e RFC 9068 §2.2.
 4. **Validação de Tamanho Mínimo de Chave**:  

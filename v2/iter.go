@@ -93,6 +93,7 @@ func ObjectProperties(rawObject []byte, errOut ...*error) iter.Seq[JSONProp] {
 }
 
 // IterWithScratch is identical to Iter but uses a caller-supplied Scratch state.
+// It guarantees 0 B/op and 0 allocs/op across all Go versions (Go 1.23+).
 func (v *Verifier) IterWithScratch(tok []byte, now int64, st *Scratch) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
 		plBytes, err := v.verifySignatureAndDecodePayload(tok, st)
@@ -130,6 +131,15 @@ func (v *Verifier) IterWithScratch(tok []byte, now int64, st *Scratch) iter.Seq2
 //
 // Verification is atomic: if the token is not authentic or fails any validation rule,
 // the error is yielded once and iteration terminates immediately without yielding claims.
+//
+// Allocation note: Iter achieves 0 B/op and 0 allocs/op on Go 1.24+ (and ~3 allocs/op on
+// Go 1.23 due to compiler closure escape differences). For guaranteed zero allocations on
+// all Go versions (Go 1.23+), use IterWithScratch with a reusable *Scratch.
+//
+// Panic note: Iter intentionally avoids defer to keep the critical loop zero-alloc on Go 1.24+.
+// If the caller's iteration loop panics, the leased scratch is abandoned to the garbage collector
+// rather than returned to sync.Pool, and with ZeroMemory enabled, claims memory in that scratch
+// is not zeroed.
 func (v *Verifier) Iter(tok []byte, now int64) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
 		st := v.acquireScratch()
@@ -144,6 +154,15 @@ func (v *Verifier) Iter(tok []byte, now int64) iter.Seq2[JSONProp, error] {
 //
 // Verification is atomic: if the token is not authentic or fails any validation rule,
 // the error is yielded once and iteration terminates immediately without yielding claims.
+//
+// Allocation note: IterSplit achieves 0 B/op and 0 allocs/op on Go 1.24+ (and ~3 allocs/op on
+// Go 1.23 due to compiler closure escape differences). For guaranteed zero allocations on
+// all Go versions (Go 1.23+), use IterSplitWithScratch with a reusable *Scratch.
+//
+// Panic note: IterSplit intentionally avoids defer to keep the critical loop zero-alloc on Go 1.24+.
+// If the caller's iteration loop panics, the leased scratch is abandoned to the garbage collector
+// rather than returned to sync.Pool, and with ZeroMemory enabled, claims memory in that scratch
+// is not zeroed.
 func (v *Verifier) IterSplit(head, tail []byte, now int64) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
 		st := v.acquireScratch()
@@ -153,6 +172,7 @@ func (v *Verifier) IterSplit(head, tail []byte, now int64) iter.Seq2[JSONProp, e
 }
 
 // IterSplitWithScratch is identical to IterSplit but uses a caller-supplied Scratch state.
+// It guarantees 0 B/op and 0 allocs/op across all Go versions (Go 1.23+).
 func (v *Verifier) IterSplitWithScratch(head, tail []byte, now int64, st *Scratch) iter.Seq2[JSONProp, error] {
 	return func(yield func(JSONProp, error) bool) {
 		var (
