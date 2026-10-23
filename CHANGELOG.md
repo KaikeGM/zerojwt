@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.1.3] - 2026-10-22
+
+### Documentation
+- **Iterator Allocation and Panic Semantics (`v2/iter.go`, `v2/README.md`):**
+  - Explicitly documented compiler-dependent allocation characteristics: `Iter` and `IterSplit` allocate ~3 allocs/op in Go 1.23 and 0 allocs/op in Go 1.24+, while `IterWithScratch` and `IterSplitWithScratch` guarantee `0 B/op, 0 allocs/op` across all supported Go versions (Go 1.23+).
+  - Documented non-defer panic recovery behavior in `Iter` / `IterSplit`: if the iteration loop panics, the leased scratch is abandoned to the garbage collector rather than recycled to `sync.Pool`.
+  - Clarified RFC 8259 top-level header parsing boundaries in READMEs: validates separators, numbers, and JSON structure, without validating inner string literal contents.
+- **Changelog Precision:**
+  - Corrected description of `ParseJWKS` buffer protection to reference temporary copies instead of stack buffers.
+
+---
+
 ## [v2.1.2] - 2026-10-22
 
 ### Fixed
@@ -25,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Restored nesting depth limit (32 levels) and stack-allocated bracket matching `[32]byte` to catch mismatched braces/brackets (e.g. `[1}]`).
   - Restored rejection of malformed scalar tokens (e.g. `truee`, `nulll`).
 - **Input Buffer Immutability in `ParseJWKS` (`v2/jwks.go`):**
-  - Eliminated caller input buffer mutation by copying escaped `kid` values into a temporary stack buffer prior to in-place unescaping, protecting cached JWKS response payloads.
+  - Eliminated caller input buffer mutation by copying escaped `kid` values into a temporary copy buffer prior to in-place unescaping, protecting cached JWKS response payloads.
 - **RFC 7517 §5 JWKS Interoperability (`v2/jwks.go`):**
   - Gracefully ignores unsupported key types (such as RSA `kty: "RSA"`) and encryption keys (`use: "enc"`), failing closed only when the resulting key set is empty.
 

@@ -1,0 +1,33 @@
+name: Nightly Fuzz Testing
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # Runs nightly at 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Continuous Fuzzing (5 min/target)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: Fuzz Root Verifier (5m)
+        run: go test -fuzz=FuzzVerify -fuzztime=5m .
+
+      - name: Fuzz v2 Header Validation (5m)
+        working-directory: ./v2
+        run: go test -fuzz=FuzzHeaderValidation -fuzztime=5m .
+
+      - name: Fuzz v2 Scanner Differential (5m)
+        working-directory: ./v2
+        run: go test -fuzz=FuzzScannerDifferential -fuzztime=5m .
