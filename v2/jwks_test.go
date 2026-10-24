@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
 	"testing"
@@ -272,8 +273,44 @@ func TestUpdateKeys_EdgeCases(t *testing.T) {
 		t.Error("expected error for wrong curve ECDSAPublic")
 	}
 
+	// RS256 verifier with nil RSAPublic
+	rsaPriv, _ := rsa.GenerateKey(rand.Reader, 2048)
+	rsaV, err := NewRS256Verifier(&rsaPriv.PublicKey, rsaPriv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rsaV.UpdateKeys([]Key{{ID: "k1", RSAPublic: nil}}); err == nil {
+		t.Error("expected error for nil RSAPublic in RS256 UpdateKeys")
+	}
+
+	// ES384 verifier with invalid ECDSAPublic
+	p384Priv, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	es384V, err := NewES384Verifier(&p384Priv.PublicKey, p384Priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := es384V.UpdateKeys([]Key{{ID: "k1", ECDSAPublic: nil}}); err == nil {
+		t.Error("expected error for nil ECDSAPublic in ES384 UpdateKeys")
+	}
+	if err := es384V.UpdateKeys([]Key{{ID: "k1", ECDSAPublic: &ecPriv.PublicKey}}); err == nil {
+		t.Error("expected error for wrong curve (P-256) in ES384 UpdateKeys")
+	}
+
+	// ES512 verifier with invalid ECDSAPublic
+	p521Priv, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	es512V, err := NewES512Verifier(&p521Priv.PublicKey, p521Priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := es512V.UpdateKeys([]Key{{ID: "k1", ECDSAPublic: nil}}); err == nil {
+		t.Error("expected error for nil ECDSAPublic in ES512 UpdateKeys")
+	}
+	if err := es512V.UpdateKeys([]Key{{ID: "k1", ECDSAPublic: &ecPriv.PublicKey}}); err == nil {
+		t.Error("expected error for wrong curve (P-256) in ES512 UpdateKeys")
+	}
+
 	// Unsupported algorithm
-	unsupportedV := &Verifier{alg: "RS256"}
+	unsupportedV := &Verifier{alg: "NONE"}
 	if err := unsupportedV.UpdateKeys([]Key{{ID: "k1"}}); err == nil {
 		t.Error("expected error for unsupported algorithm in UpdateKeys")
 	}
@@ -303,10 +340,10 @@ func TestJWKS_BufferImmutability(t *testing.T) {
 }
 
 func TestJWKS_RFC7517_Interoperability(t *testing.T) {
-	// JWKS containing an RSA key, an encryption key ("use": "enc"), and a valid oct key
+	// JWKS containing an unsupported key ("kty": "DH"), an encryption key ("use": "enc"), and a valid oct key
 	mixedJWKS := []byte(`{
 		"keys": [
-			{"kty": "RSA", "kid": "rsa-1", "n": "abc", "e": "AQAB"},
+			{"kty": "DH", "kid": "dh-1", "p": "abc"},
 			{"kty": "oct", "kid": "enc-key", "use": "enc", "k": "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"},
 			{"kty": "oct", "kid": "sig-key", "use": "sig", "k": "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"}
 		]
@@ -320,9 +357,9 @@ func TestJWKS_RFC7517_Interoperability(t *testing.T) {
 	}
 
 	// JWKS with only unsupported keys or enc keys -> ErrInvalidJWKS
-	onlyRSA := []byte(`{"keys":[{"kty":"RSA","kid":"rsa-1","n":"abc"}]}`)
-	if _, err := ParseJWKS(onlyRSA); err != ErrInvalidJWKS {
-		t.Fatalf("expected ErrInvalidJWKS for RSA-only JWKS, got %v", err)
+	onlyUnsupported := []byte(`{"keys":[{"kty":"DH","kid":"dh-1","p":"abc"}]}`)
+	if _, err := ParseJWKS(onlyUnsupported); err != ErrInvalidJWKS {
+		t.Fatalf("expected ErrInvalidJWKS for unsupported-only JWKS, got %v", err)
 	}
 
 	onlyEnc := []byte(`{"keys":[{"kty":"oct","kid":"e1","use":"enc","k":"MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE"}]}`)

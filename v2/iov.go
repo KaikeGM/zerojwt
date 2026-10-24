@@ -1,10 +1,13 @@
 package zerojwt
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"strconv"
 )
@@ -39,7 +42,11 @@ func (v *Verifier) SignToIOVWithScratch(dst []byte, payloadJSON []byte, iov *[2]
 
 	enc := base64.RawURLEncoding
 	pEncLen := enc.EncodedLen(len(payloadJSON))
-	tailLen := pEncLen + 1 + v.sigEncodedLen // "payload.signature"
+	sigEncLen := v.sigEncodedLen
+	if v.alg == AlgRS256 && v.rsaPriv != nil {
+		sigEncLen = enc.EncodedLen(v.rsaPriv.Size())
+	}
+	tailLen := pEncLen + 1 + sigEncLen // "payload.signature"
 
 	if cap(dst)-start < tailLen {
 		grown := make([]byte, start, start+tailLen)
@@ -76,10 +83,52 @@ func (v *Verifier) SignToIOVWithScratch(dst []byte, payloadJSON []byte, iov *[2]
 			rr = rand.Reader
 		}
 		asn1Sig, err := ecdsa.SignASN1(rr, v.ecPriv, digest)
-		if err != nil || !decodeDERToP1363(asn1Sig, st.sumBuf[:64]) {
+		if err != nil || !decodeDERToP1363(asn1Sig, st.sigBuf[:64]) {
 			return ErrSigningFailed
 		}
-		sig = st.sumBuf[:64]
+		sig = st.sigBuf[:64]
+	case AlgES384:
+		h := sha512.New384()
+		h.Write(v.encodedHeaderDotBytes)
+		h.Write(encPayload)
+		digest := h.Sum(st.sumBuf[:0])
+		rr := v.randReader
+		if rr == nil {
+			rr = rand.Reader
+		}
+		asn1Sig, err := ecdsa.SignASN1(rr, v.ecPriv, digest)
+		if err != nil || !decodeDERToP1363(asn1Sig, st.sigBuf[:96]) {
+			return ErrSigningFailed
+		}
+		sig = st.sigBuf[:96]
+	case AlgES512:
+		h := sha512.New()
+		h.Write(v.encodedHeaderDotBytes)
+		h.Write(encPayload)
+		digest := h.Sum(st.sumBuf[:0])
+		rr := v.randReader
+		if rr == nil {
+			rr = rand.Reader
+		}
+		asn1Sig, err := ecdsa.SignASN1(rr, v.ecPriv, digest)
+		if err != nil || !decodeDERToP1363(asn1Sig, st.sigBuf[:132]) {
+			return ErrSigningFailed
+		}
+		sig = st.sigBuf[:132]
+	case AlgRS256:
+		h := sha256.New()
+		h.Write(v.encodedHeaderDotBytes)
+		h.Write(encPayload)
+		digest := h.Sum(st.sumBuf[:0])
+		rr := v.randReader
+		if rr == nil {
+			rr = rand.Reader
+		}
+		rsaSig, err := rsa.SignPKCS1v15(rr, v.rsaPriv, crypto.SHA256, digest)
+		if err != nil {
+			return ErrSigningFailed
+		}
+		sig = rsaSig
 	default:
 		st.mac.Reset()
 		_, _ = st.mac.Write(v.encodedHeaderDotBytes)
@@ -90,12 +139,12 @@ func (v *Verifier) SignToIOVWithScratch(dst []byte, payloadJSON []byte, iov *[2]
 	// 3. Append '.' and Base64URL-encoded signature to dst
 	dst = append(dst, '.')
 	sigStart := len(dst)
-	dst = dst[:sigStart+v.sigEncodedLen]
+	dst = dst[:sigStart+sigEncLen]
 	enc.Encode(dst[sigStart:], sig)
 
 	// 4. Populate 2-element scatter/gather vector (0 allocs)
 	iov[0] = v.encodedHeaderDotBytes
-	iov[1] = dst[start : sigStart+v.sigEncodedLen]
+	iov[1] = dst[start : sigStart+sigEncLen]
 	return nil
 }
 

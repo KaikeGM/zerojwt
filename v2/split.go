@@ -2,10 +2,13 @@ package zerojwt
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/hmac"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 )
 
 // decodeBase64Split decodes a Base64URL string split across b1 and b2 directly into dst
@@ -240,11 +243,25 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 	}
 
 	// 3. Decode signature
+	var rsaPub *rsa.PublicKey
+	expectedSigLen := v.sigDecodedLen
+	if v.alg == AlgRS256 {
+		if keyIdx >= 0 {
+			rsaPub = ks.keys[keyIdx].rsaPublic
+		} else {
+			rsaPub = v.rsaPub
+		}
+		if rsaPub == nil {
+			return nil, ErrInvalidSignature
+		}
+		expectedSigLen = rsaPub.Size()
+	}
+
 	if enc.DecodedLen(sLen) > len(st.sigBuf) {
 		return nil, ErrInvalidSignature
 	}
 	nSig, err := decodeBase64Split(st.sigBuf[:], s1, s2)
-	if err != nil || nSig != v.sigDecodedLen {
+	if err != nil || nSig != expectedSigLen {
 		return nil, ErrInvalidSignature
 	}
 
@@ -270,13 +287,53 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 		if pub == nil {
 			return nil, ErrInvalidSignature
 		}
-		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:32], st.sigBuf[32:64])
+		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:32], st.sigBuf[32:64], 32)
 		if !ok {
 			return nil, ErrInvalidSignature
 		}
 		signInput := stitchSigningInput(st, signingPart1, signingPart2)
 		digest := sha256.Sum256(signInput)
 		if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
+			return nil, ErrInvalidSignature
+		}
+	case AlgES384:
+		pub := v.ecPub
+		if keyIdx >= 0 {
+			pub = ks.keys[keyIdx].ecdsaPublic
+		}
+		if pub == nil {
+			return nil, ErrInvalidSignature
+		}
+		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:48], st.sigBuf[48:96], 48)
+		if !ok {
+			return nil, ErrInvalidSignature
+		}
+		signInput := stitchSigningInput(st, signingPart1, signingPart2)
+		digest := sha512.Sum384(signInput)
+		if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
+			return nil, ErrInvalidSignature
+		}
+	case AlgES512:
+		pub := v.ecPub
+		if keyIdx >= 0 {
+			pub = ks.keys[keyIdx].ecdsaPublic
+		}
+		if pub == nil {
+			return nil, ErrInvalidSignature
+		}
+		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:66], st.sigBuf[66:132], 66)
+		if !ok {
+			return nil, ErrInvalidSignature
+		}
+		signInput := stitchSigningInput(st, signingPart1, signingPart2)
+		digest := sha512.Sum512(signInput)
+		if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
+			return nil, ErrInvalidSignature
+		}
+	case AlgRS256:
+		signInput := stitchSigningInput(st, signingPart1, signingPart2)
+		digest := sha256.Sum256(signInput)
+		if err := rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, digest[:], st.sigBuf[:nSig]); err != nil {
 			return nil, ErrInvalidSignature
 		}
 	default:

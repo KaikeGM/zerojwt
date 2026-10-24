@@ -21,7 +21,8 @@ Assinatura, verificação e streaming de propriedades JSON de JWT de ultra-alta 
 - [Algoritmos Criptográficos](#algoritmos-criptográficos)
   - [Simétrico: HS256, HS384, HS512](#1-simétrico-hmac-hs256-hs384-hs512)
   - [Assimétrico: EdDSA (Ed25519)](#2-assimétrico-eddsa-ed25519--rfc-8037)
-  - [Assimétrico: ES256 (ECDSA P-256)](#3-assimétrico-es256-ecdsa-p-256--rfc-7518)
+  - [Assimétrico: ES256, ES384, ES512 (ECDSA)](#3-assimétrico-es256-es384-es512-ecdsa--rfc-7518)
+  - [Assimétrico: RS256 (RSA PKCS#1 v1.5)](#4-assimétrico-rs256-rsa-pkcs1-v15--rfc-7518)
 - [Validação RFC 7519 e Claims](#validação-rfc-7519-e-claims)
   - [Struct Única e Unificada Claims](#struct-única-e-unificada-claims)
   - [Tolerância de Desvio de Relógio (Leeway)](#tolerância-de-desvio-de-relógio-leeway)
@@ -144,12 +145,12 @@ Medido em Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 |                                                  ^                                                 |
 |                                                  | (Decodifica direto nos campos da pilha)         |
 |                                                  |                                                 |
-|  [ Workspace Scratch (3024 Bytes, Gerenciado por Worker ou Pool) ]                                 |
+|  [ Workspace Scratch (3512 Bytes, Gerenciado por Worker ou Pool) ]                                 |
 |  +----------------------------------------------------------------------------------------------+  |
 |  | - Hashers HMAC pré-inicializados e versão de chaves (mac, keyMacs, keyVersion [8B])          |  |
-|  | - Buffer de Assinatura: sigBuf [96B]                                                         |  |
+|  | - Buffer de Assinatura: sigBuf [512B] (suporta RSA-2048/3072/4096, ES512)                    |  |
 |  | - Buffer de Checksum: sumBuf [64B]                                                           |  |
-|  | - Buffer de Decodificação DER: derBuf [72B]                                                  |  |
+|  | - Buffer de Decodificação DER: derBuf [144B] (P-256, P-384, P-521 formato longo DER)         |  |
 |  | - Buffer Scratch de Cabeçalho: hdrArr [128B] / hdrBuf                                        |  |
 |  | - Buffer Scratch de Payload: payloadArr [1024B] / payloadBuf                                 |  |
 |  | - Buffer de Montagem de Assinatura: signArr [1544B] (Base64 Header + '.' + Payload)          |  |
@@ -260,15 +261,36 @@ v, err := zerojwt.NewEd25519Verifier(pub, priv)
 vVerifOnly, err := zerojwt.NewEd25519Verifier(pub, nil)
 ```
 
-### 3. Assimétrico: ES256 (ECDSA P-256 / RFC 7518)
+### 3. Assimétrico: ES256, ES384, ES512 (ECDSA / RFC 7518)
 
-Valida chaves NIST P-256, checa correspondência do par e verifica os limites escalares $1 \le D < N$:
+Valida chaves NIST P-256, P-384 e P-521 com conversão estrita IEEE P1363 <-> ASN.1 DER, validação cruzada do par de chaves e checagem de limites escalares $1 \le D < N$:
 
 ```go
-priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// ES256 (NIST P-256 com SHA-256)
+priv256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+v256, err := zerojwt.NewES256Verifier(&priv256.PublicKey, priv256)
 
-// Emissor + Verificador completo
-v, err := zerojwt.NewES256Verifier(&priv.PublicKey, priv)
+// ES384 (NIST P-384 com SHA-384)
+priv384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+v384, err := zerojwt.NewES384Verifier(&priv384.PublicKey, priv384)
+
+// ES512 (NIST P-521 com SHA-512, suporte a coordenadas de 66B e DER longo)
+priv521, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+v521, err := zerojwt.NewES512Verifier(&priv521.PublicKey, priv521)
+```
+
+### 4. Assimétrico: RS256 (RSA PKCS#1 v1.5 / RFC 7518)
+
+Verificação assimétrica ultra-rápida (~28 µs/op com expoente público curto $e = 65537$), oferecendo compatibilidade nativa imediata com Auth0, Keycloak, Microsoft Entra ID, Google e AWS Cognito:
+
+```go
+privRSA, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+// Emissor + Verificador completo (validação cruzada priv.PublicKey == pub e priv.Validate())
+vRSA, err := zerojwt.NewRS256Verifier(&privRSA.PublicKey, privRSA)
+
+// Somente Verificador (apenas chave pública: impõe módulo de 2048-4096 bits, N ímpar, e >= 65537)
+vRSAOnly, err := zerojwt.NewRS256Verifier(&privRSA.PublicKey, nil)
 ```
 
 ---
@@ -483,7 +505,7 @@ err := v.UpdateKeys([]zerojwt.Key{
 Analisa e ingere conjuntos padrão de chaves JSON Web Key Sets (RFC 7517) de Provedores de Identidade (ex: Auth0, Keycloak, Okta, AWS Cognito) com **0 dependências externas**:
 
 ```go
-// Parser JWKS em Go puro (suporta oct, OKP/Ed25519 e EC/P-256):
+// Parser JWKS em Go puro (suporta oct, OKP/Ed25519, EC P-256/P-384/P-521 e RSA 2048-4096):
 keys, err := zerojwt.ParseJWKS(jwksJSONBytes)
 
 // Ou atualize o conjunto de chaves do Verifier diretamente a partir do JSON bruto sem downtime:
@@ -491,8 +513,9 @@ err = v.UpdateKeysFromJWKS(jwksJSONBytes)
 ```
 
 #### Garantias Criptográficas e Conformidade com as RFCs:
-- **Tamanho Estrito de Coordenadas P-256 (RFC 7518 §6.2.1.2 e §6.2.1.3)**: Coordenadas `x` e `y` devem conter exatamente 32 octetos. Truncamento de zeros à esquerda ou preenchimento com zeros adicionais são estritamente rejeitados.
-- **Verificação de Curva no Padrão Wycheproof**: Valida chaves públicas contra a geometria da curva P-256 (`elliptic.P256().IsOnCurve`), rejeitando o ponto no infinito $(0,0)$ e coordenadas fora da curva já no momento do parse.
+- **Tamanhos Estritos de Coordenadas EC (RFC 7518 §6.2.1.2 e §6.2.1.3)**: Coordenadas `x` e `y` devem conter exatamente 32 octetos para P-256, 48 octetos para P-384 e 66 octetos para P-521. Truncamento de zeros à esquerda ou preenchimento com zeros adicionais são estritamente rejeitados.
+- **Validação Estrita de Chaves RSA (RFC 7518 §6.3)**: Zeros à esquerda nas codificações `Base64urlUInt` de `n` e `e` são proibidos (`nBytes[0] == 0 || eBytes[0] == 0`). O módulo $N$ deve ser ímpar e ter entre 2048 e 4096 bits; o expoente público $E$ deve ser ímpar com $65537 \le E \le 2^{31}-1$.
+- **Verificação de Curva no Padrão Wycheproof**: Valida chaves públicas contra a geometria da curva (`elliptic.Curve.IsOnCurve`), rejeitando o ponto no infinito $(0,0)$ e coordenadas fora da curva já no momento do parse.
 - **Matriz de Operações `use` e `key_ops` (RFC 7517)**:
   - `use`: estritamente validado como string; aceita apenas `"sig"` e `"enc"`; rejeita qualquer outro valor.
   - `key_ops`: deve ser um array JSON não-vazio de strings não-vazias. Rejeita configurações conflitantes (ex.: `"use": "sig"` com operações de criptografia ou `"use": "enc"` com operações de assinatura). Chaves sem a permissão `"verify"` são ignoradas sem falhar o JWKS.

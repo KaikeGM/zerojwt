@@ -506,10 +506,10 @@ func TestRemainingCoverage(t *testing.T) {
 	}
 
 	// 27. Signature length bounds in verifySignatureAndDecodePayload
-	bigSig := base64.RawURLEncoding.EncodeToString(make([]byte, 100))
+	bigSig := base64.RawURLEncoding.EncodeToString(make([]byte, 600))
 	tokBigSig := []byte("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0." + bigSig)
 	if _, err := v.verifySignatureAndDecodePayload(tokBigSig, st); !errors.Is(err, ErrInvalidSignature) {
-		t.Fatalf("expected ErrInvalidSignature for sig > 96 bytes, got %v", err)
+		t.Fatalf("expected ErrInvalidSignature for sig > 512 bytes, got %v", err)
 	}
 
 	shortSig := base64.RawURLEncoding.EncodeToString(make([]byte, 16))

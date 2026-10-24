@@ -14,7 +14,7 @@ import (
 )
 
 func TestInternalDERConversion(t *testing.T) {
-	var derBuf [72]byte
+	var derBuf [144]byte
 
 	// encodeP1363ToDER with empty r or s
 	if _, ok := encodeP1363ToDER(&derBuf, nil, []byte("s")); ok {

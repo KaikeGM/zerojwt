@@ -5,12 +5,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/rsa"
 	"math/big"
 )
 
 // ParseJWKS parses a JSON Web Key Set (RFC 7517) JSON document into a slice of Key structs.
 // It operates with zero external dependencies and enforces cryptographic parameter validity
-// (e.g. NIST P-256 curve checks, Ed25519 32-byte public key length, non-empty symmetric keys).
+// (e.g. NIST P-256/P-384/P-521 curve checks, RSA 2048-4096 bit modulus, Ed25519 32-byte public key length).
 func ParseJWKS(jwks []byte) ([]Key, error) {
 	body, ok := TrimJSONObject(jwks)
 	if !ok {
@@ -54,8 +55,8 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 		}
 
 		var (
-			kty, kid, crv, k, x, y, use, alg, keyOps []byte
-			hasUse, hasKeyOps                        bool
+			kty, kid, crv, k, x, y, n, e, use, alg, keyOps []byte
+			hasUse, hasKeyOps                              bool
 		)
 		for len(elemObj) > 0 {
 			propKey, propVal, isStr, restProp, ok := NextJSONProp(elemObj)
@@ -73,7 +74,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 			}
 			if !isStr {
 				switch string(propKey) {
-				case "kty", "use", "alg", "kid", "crv", "k", "x", "y":
+				case "kty", "use", "alg", "kid", "crv", "k", "x", "y", "n", "e":
 					return nil, ErrInvalidJWKS
 				}
 				continue
@@ -104,6 +105,10 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				x = propVal
 			case "y":
 				y = propVal
+			case "n":
+				n = propVal
+			case "e":
+				e = propVal
 			}
 		}
 
@@ -149,32 +154,100 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				Ed25519Public: ed25519.PublicKey(pubBytes),
 			})
 		case "EC":
-			if len(kid) == 0 || string(crv) != "P-256" || len(x) == 0 || len(y) == 0 || (len(alg) > 0 && string(alg) != "ES256") {
+			if len(kid) == 0 || len(x) == 0 || len(y) == 0 {
 				return nil, ErrInvalidJWKS
 			}
-			// RFC 7518 §6.2.1.2 & §6.2.1.3: P-256 coordinates MUST be exactly 32 octets.
+			var (
+				curve      elliptic.Curve
+				coordLen   int
+				matchedAlg string
+			)
+			switch string(crv) {
+			case "P-256":
+				curve = elliptic.P256()
+				coordLen = 32
+				matchedAlg = "ES256"
+			case "P-384":
+				curve = elliptic.P384()
+				coordLen = 48
+				matchedAlg = "ES384"
+			case "P-521":
+				curve = elliptic.P521()
+				coordLen = 66
+				matchedAlg = "ES512"
+			default:
+				return nil, ErrInvalidJWKS
+			}
+			if len(alg) > 0 && string(alg) != matchedAlg {
+				return nil, ErrInvalidJWKS
+			}
+			// RFC 7518 §6.2.1.2: coordinates MUST be exactly coordLen octets.
 			xBytes, err := decodeJWKSBase64(x)
-			if err != nil || len(xBytes) != 32 {
+			if err != nil || len(xBytes) != coordLen {
 				return nil, ErrInvalidJWKS
 			}
 			yBytes, err := decodeJWKSBase64(y)
-			if err != nil || len(yBytes) != 32 {
+			if err != nil || len(yBytes) != coordLen {
 				return nil, ErrInvalidJWKS
 			}
 			pub := &ecdsa.PublicKey{
-				Curve: elliptic.P256(),
+				Curve: curve,
 				X:     new(big.Int).SetBytes(xBytes),
 				Y:     new(big.Int).SetBytes(yBytes),
 			}
-			if !isValidP256PublicKey(pub) {
-				return nil, ErrInvalidJWKS
+			switch string(crv) {
+			case "P-256":
+				if !isValidP256PublicKey(pub) {
+					return nil, ErrInvalidJWKS
+				}
+			case "P-384":
+				if !isValidP384PublicKey(pub) {
+					return nil, ErrInvalidJWKS
+				}
+			default:
+				if !isValidP521PublicKey(pub) {
+					return nil, ErrInvalidJWKS
+				}
 			}
 			res = append(res, Key{
 				ID:          string(kid),
 				ECDSAPublic: pub,
 			})
+		case "RSA":
+			if len(kid) == 0 || len(n) == 0 || len(e) == 0 || (len(alg) > 0 && string(alg) != "RS256") {
+				return nil, ErrInvalidJWKS
+			}
+			nBytes, err := decodeJWKSBase64(n)
+			if err != nil || len(nBytes) == 0 || nBytes[0] == 0 {
+				return nil, ErrInvalidJWKS
+			}
+			eBytes, err := decodeJWKSBase64(e)
+			if err != nil || len(eBytes) == 0 || eBytes[0] == 0 {
+				return nil, ErrInvalidJWKS
+			}
+			nBig := new(big.Int).SetBytes(nBytes)
+			bitLen := nBig.BitLen()
+			if bitLen < 2048 || bitLen > 4096 || nBig.Bit(0) == 0 {
+				return nil, ErrInvalidJWKS
+			}
+			eBig := new(big.Int).SetBytes(eBytes)
+			if eBig.BitLen() > 31 {
+				return nil, ErrInvalidJWKS
+			}
+			eInt := int(eBig.Int64())
+			if eInt < 65537 || eInt > 2147483647 || eInt%2 == 0 {
+				return nil, ErrInvalidJWKS
+			}
+			pub := &rsa.PublicKey{
+				N: nBig,
+				E: eInt,
+			}
+			res = append(res, Key{
+				ID:        string(kid),
+				RSAPublic: pub,
+			})
 		default:
-			// RFC 7517 §5: ignore unsupported key types (e.g. RSA) without failing the whole JWKS document.
+			// RFC 7517 §5: ignore unsupported key types without failing the whole JWKS document.
 			continue
 		}
 

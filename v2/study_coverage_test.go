@@ -173,7 +173,7 @@ func TestStudyFullCoverage(t *testing.T) {
 	}
 
 	// Signature too large
-	bigSig := bytes.Repeat([]byte("A"), 200)
+	bigSig := bytes.Repeat([]byte("A"), 800)
 	validHdr := []byte("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.")
 	if _, err := v.verifySplitSignatureAndDecodePayload(validHdr, append([]byte("eyJzdWIiOiIxIn0."), bigSig...), st); !errors.Is(err, ErrInvalidSignature) {
 		t.Fatalf("expected ErrInvalidSignature for huge signature, got %v", err)

@@ -5,6 +5,29 @@ All notable changes to `zerojwt` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.3.0] - 2026-10-24
+
+### Added
+- **Native `RS256` (RSASSA-PKCS1-v1_5 with SHA-256) Support (`RFC 7518 §3.3`):**
+  - Added `AlgRS256` and `NewRS256Verifier(pub, priv, ...opts)` with mathematical keypair cross-validation and `priv.Validate()`.
+  - Dynamic per-key signature length resolution (`2048-bit` [256B] to `4096-bit` [512B] keys) across `Verify`, `VerifySplit`, `Sign`, `SignToIOV`, and multi-key `kid` rotation.
+  - Strict RFC 7518 §6.3 & FIPS 186-4 public key validation: enforces odd modulus $2048 \le \text{bits}(N) \le 4096$ and odd public exponent $65537 \le E \le 2^{31}-1$.
+- **Complete NIST ECDSA Suite: `ES384` (P-384) & `ES512` (P-521) (`RFC 7518 §3.4`):**
+  - Added `AlgES384`, `AlgES512`, `NewES384Verifier`, and `NewES512Verifier`.
+  - Extended stack-based IEEE P1363 $\leftrightarrow$ ASN.1 DER converters (`encodeP1363ToDERInto` / `decodeDERToP1363`) to support 48-byte (P-384) and 66-byte (P-521) coordinates, including X.690 long-form DER sequence headers (`0x30 0x81 <len>`) when `seqLen >= 128`.
+- **Extended Zero-Dependency `ParseJWKS` (`RFC 7517` / `RFC 7518`):**
+  - Added ingestion for `"kty": "RSA"` (rejecting non-canonical leading zero bytes on `n` and `e` per RFC 7518 §6.3.1.1) and `"kty": "EC"` with curves `"P-384"` and `"P-521"`.
+  - Defensive deep-cloning of `*rsa.PublicKey` and `*ecdsa.PublicKey` `big.Int` scalars (`cloneRSAPublicKey`, `cloneECDSAPublicKey`) to guarantee lock-free immutability.
+- **Scratch Workspace Alignment (3,512 Bytes / ~3.5 KB) & Updated Profile-Guided Optimization (`v2/default.pgo`):**
+  - Resized `sigBuf` from 96 bytes to 512 bytes (supporting up to RSA-4096 and ES512) and `derBuf` from 72 bytes to 144 bytes with fully inlined `Clear()`.
+  - Regenerated `default.pgo` to match the newly optimized function layout and call site offsets for v2.3.0.
+
+### Security & Quality
+- Audited against `go-vulndb`, `gosec-rules`, and Project Wycheproof vectors via XERJ.
+- **100.0% statement coverage**, `0 B/op, 0 allocs/op` on all symmetric/EdDSA/framework paths, and `0` race conditions under `go test -race`.
+
+---
+
 ## [v2.2.0] - 2026-10-24
 
 ### Security & Cryptographic Hardening

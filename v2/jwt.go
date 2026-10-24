@@ -2,11 +2,13 @@ package zerojwt
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -35,6 +37,12 @@ const (
 	AlgEdDSA Algorithm = "EdDSA"
 	// AlgES256 represents ECDSA using P-256 and SHA-256 (RFC 7518 §3.4).
 	AlgES256 Algorithm = "ES256"
+	// AlgES384 represents ECDSA using P-384 and SHA-384 (RFC 7518 §3.4).
+	AlgES384 Algorithm = "ES384"
+	// AlgES512 represents ECDSA using P-521 and SHA-512 (RFC 7518 §3.4).
+	AlgES512 Algorithm = "ES512"
+	// AlgRS256 represents RSASSA-PKCS1-v1_5 using SHA-256 (RFC 7518 §3.3).
+	AlgRS256 Algorithm = "RS256"
 )
 
 // String returns the algorithm name string.
@@ -62,6 +70,9 @@ const (
 	encodedHS512HeaderDot = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9."
 	encodedEdDSAHeaderDot = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9."
 	encodedES256HeaderDot = "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9."
+	encodedES384HeaderDot = "eyJhbGciOiJFUzM4NCIsInR5cCI6IkpXVCJ9."
+	encodedES512HeaderDot = "eyJhbGciOiJFUzUxMiIsInR5cCI6IkpXVCJ9."
+	encodedRS256HeaderDot = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
 )
 
 var (
@@ -81,6 +92,7 @@ type Key struct {
 	Secret        []byte
 	Ed25519Public ed25519.PublicKey
 	ECDSAPublic   *ecdsa.PublicKey
+	RSAPublic     *rsa.PublicKey
 }
 
 type compiledKey struct {
@@ -88,6 +100,7 @@ type compiledKey struct {
 	secret        []byte
 	ed25519Public ed25519.PublicKey
 	ecdsaPublic   *ecdsa.PublicKey
+	rsaPublic     *rsa.PublicKey
 }
 
 type keySet struct {
@@ -118,10 +131,14 @@ type Options struct {
 	Ed25519PublicKey ed25519.PublicKey
 	// Ed25519PrivateKey is the 64-byte private key used for signing when Algorithm is AlgEdDSA.
 	Ed25519PrivateKey ed25519.PrivateKey
-	// ECDSAPublicKey is the P-256 public key used when Algorithm is AlgES256.
+	// ECDSAPublicKey is the ECDSA public key used when Algorithm is AlgES256, AlgES384, or AlgES512.
 	ECDSAPublicKey *ecdsa.PublicKey
-	// ECDSAPrivateKey is the P-256 private key used for signing when Algorithm is AlgES256.
+	// ECDSAPrivateKey is the ECDSA private key used for signing when Algorithm is AlgES256, AlgES384, or AlgES512.
 	ECDSAPrivateKey *ecdsa.PrivateKey
+	// RSAPublicKey is the RSA public key used when Algorithm is AlgRS256.
+	RSAPublicKey *rsa.PublicKey
+	// RSAPrivateKey is the RSA private key used for signing when Algorithm is AlgRS256.
+	RSAPrivateKey *rsa.PrivateKey
 	// ZeroMemory zeroes out internal scratch buffers with 0x00 after each operation.
 	ZeroMemory bool
 	// AllowMissingExp relaxes the default requirement that tokens must contain an "exp" claim.
@@ -137,9 +154,9 @@ type Scratch struct {
 	mac        hash.Hash
 	keyMacs    []hash.Hash
 	keyVersion int64
-	sigBuf     [96]byte
+	sigBuf     [512]byte
 	sumBuf     [64]byte
-	derBuf     [72]byte
+	derBuf     [144]byte
 	hdrBuf     []byte
 	payloadBuf []byte
 	hdrArr     [MaxHeaderSize]byte
@@ -266,6 +283,8 @@ type Verifier struct {
 	edPriv                ed25519.PrivateKey
 	ecPub                 *ecdsa.PublicKey
 	ecPriv                *ecdsa.PrivateKey
+	rsaPub                *rsa.PublicKey
+	rsaPriv               *rsa.PrivateKey
 	keys                  []compiledKey
 	keySetPtr             atomic.Pointer[keySet]
 	keyVersionSeq         atomic.Int64
@@ -337,6 +356,51 @@ func NewES256Verifier(pub *ecdsa.PublicKey, priv *ecdsa.PrivateKey, opts ...Opti
 	return New(nil, opt)
 }
 
+// NewES384Verifier creates a new concurrent-safe ECDSA P-384 (ES384) Verifier.
+// It cross-validates that pub and priv form a mathematically matching key pair and that
+// the private key scalar satisfies 1 <= D < N.
+// For verification-only nodes, priv can be nil.
+func NewES384Verifier(pub *ecdsa.PublicKey, priv *ecdsa.PrivateKey, opts ...Options) (*Verifier, error) {
+	var opt Options
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	opt.Algorithm = AlgES384
+	opt.ECDSAPublicKey = pub
+	opt.ECDSAPrivateKey = priv
+	return New(nil, opt)
+}
+
+// NewES512Verifier creates a new concurrent-safe ECDSA P-521 (ES512) Verifier.
+// It cross-validates that pub and priv form a mathematically matching key pair and that
+// the private key scalar satisfies 1 <= D < N.
+// For verification-only nodes, priv can be nil.
+func NewES512Verifier(pub *ecdsa.PublicKey, priv *ecdsa.PrivateKey, opts ...Options) (*Verifier, error) {
+	var opt Options
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	opt.Algorithm = AlgES512
+	opt.ECDSAPublicKey = pub
+	opt.ECDSAPrivateKey = priv
+	return New(nil, opt)
+}
+
+// NewRS256Verifier creates a new concurrent-safe RSASSA-PKCS1-v1_5 (RS256) Verifier.
+// It cross-validates that pub and priv form a mathematically matching key pair,
+// that N is 2048-4096 bits and odd, that E is odd and in [65537, 2^31-1], and validates the private key.
+// For verification-only nodes, priv can be nil.
+func NewRS256Verifier(pub *rsa.PublicKey, priv *rsa.PrivateKey, opts ...Options) (*Verifier, error) {
+	var opt Options
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	opt.Algorithm = AlgRS256
+	opt.RSAPublicKey = pub
+	opt.RSAPrivateKey = priv
+	return New(nil, opt)
+}
+
 func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 	alg := opts.Algorithm
 	if alg == "" {
@@ -373,6 +437,23 @@ func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 		sigDecLen = 64
 		sigEncLen = 86
 		defaultHdrDot = encodedES256HeaderDot
+	case AlgES384:
+		sigDecLen = 96
+		sigEncLen = 128
+		defaultHdrDot = encodedES384HeaderDot
+	case AlgES512:
+		sigDecLen = 132
+		sigEncLen = 176
+		defaultHdrDot = encodedES512HeaderDot
+	case AlgRS256:
+		sigDecLen = 256
+		if opts.RSAPublicKey != nil {
+			sigDecLen = opts.RSAPublicKey.Size()
+		} else if opts.RSAPrivateKey != nil {
+			sigDecLen = opts.RSAPrivateKey.Size()
+		}
+		sigEncLen = base64.RawURLEncoding.EncodedLen(sigDecLen)
+		defaultHdrDot = encodedRS256HeaderDot
 	default:
 		alg = AlgHS256
 		sigDecLen = 32
@@ -400,6 +481,10 @@ func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 	if ecPub == nil && opts.ECDSAPrivateKey != nil {
 		ecPub = cloneECDSAPublicKey(&opts.ECDSAPrivateKey.PublicKey)
 	}
+	rsaPub := opts.RSAPublicKey
+	if rsaPub == nil && opts.RSAPrivateKey != nil {
+		rsaPub = cloneRSAPublicKey(&opts.RSAPrivateKey.PublicKey)
+	}
 
 	v := &Verifier{
 		alg:                   alg,
@@ -413,6 +498,8 @@ func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 		edPriv:                append(ed25519.PrivateKey(nil), opts.Ed25519PrivateKey...),
 		ecPub:                 cloneECDSAPublicKey(ecPub),
 		ecPriv:                opts.ECDSAPrivateKey,
+		rsaPub:                cloneRSAPublicKey(rsaPub),
+		rsaPriv:               opts.RSAPrivateKey,
 		keys:                  cKeys,
 		strictSecret:          !opts.AllowShortSecret,
 		leewaySec:             int64(opts.Leeway / time.Second),
@@ -452,7 +539,7 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 		minHS = 48
 	case AlgHS512:
 		minHS = 64
-	case AlgEdDSA, AlgES256:
+	case AlgEdDSA, AlgES256, AlgES384, AlgES512, AlgRS256:
 	default:
 		return invalid("unsupported algorithm %q", string(alg))
 	}
@@ -512,6 +599,66 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 				return ErrMismatchedKeyPair
 			}
 		}
+	case alg == AlgES384:
+		pub, priv := opts.ECDSAPublicKey, opts.ECDSAPrivateKey
+		if pub == nil {
+			if priv == nil && len(opts.Keys) == 0 {
+				return invalid("missing ECDSA key")
+			}
+		} else if !isValidP384PublicKey(pub) {
+			return invalid("ES384 requires a valid P-384 public key")
+		}
+		if priv != nil {
+			if !isValidP384PublicKey(&priv.PublicKey) {
+				return invalid("ES384 requires a valid P-384 private key")
+			}
+			if priv.D == nil || priv.D.Sign() <= 0 || priv.D.Cmp(priv.Params().N) >= 0 {
+				return invalid("ES384 requires a valid P-384 private key scalar (1 <= D < N)")
+			}
+			if pub != nil && !priv.PublicKey.Equal(pub) {
+				return ErrMismatchedKeyPair
+			}
+		}
+	case alg == AlgES512:
+		pub, priv := opts.ECDSAPublicKey, opts.ECDSAPrivateKey
+		if pub == nil {
+			if priv == nil && len(opts.Keys) == 0 {
+				return invalid("missing ECDSA key")
+			}
+		} else if !isValidP521PublicKey(pub) {
+			return invalid("ES512 requires a valid P-521 public key")
+		}
+		if priv != nil {
+			if !isValidP521PublicKey(&priv.PublicKey) {
+				return invalid("ES512 requires a valid P-521 private key")
+			}
+			if priv.D == nil || priv.D.Sign() <= 0 || priv.D.Cmp(priv.Params().N) >= 0 {
+				return invalid("ES512 requires a valid P-521 private key scalar (1 <= D < N)")
+			}
+			if pub != nil && !priv.PublicKey.Equal(pub) {
+				return ErrMismatchedKeyPair
+			}
+		}
+	case alg == AlgRS256:
+		pub, priv := opts.RSAPublicKey, opts.RSAPrivateKey
+		if pub == nil {
+			if priv == nil && len(opts.Keys) == 0 {
+				return invalid("missing RSA key")
+			}
+		} else if !isValidRSAPublicKey(pub) {
+			return invalid("RS256 requires a valid RSA public key (2048-4096 bits, odd modulus, odd E >= 65537)")
+		}
+		if priv != nil {
+			if err := priv.Validate(); err != nil {
+				return invalid("RS256 invalid private key: %v", err)
+			}
+			if !isValidRSAPublicKey(&priv.PublicKey) {
+				return invalid("RS256 requires a valid RSA private key (2048-4096 bits)")
+			}
+			if pub != nil && (priv.PublicKey.N.Cmp(pub.N) != 0 || priv.PublicKey.E != pub.E) {
+				return ErrMismatchedKeyPair
+			}
+		}
 	}
 	if opts.Leeway > 0 && opts.Leeway < time.Second {
 		return invalid("Leeway must be at least 1s (got %v)", opts.Leeway)
@@ -527,6 +674,36 @@ func isValidP256PublicKey(pub *ecdsa.PublicKey) bool {
 		pub.Curve.IsOnCurve(pub.X, pub.Y)
 }
 
+func isValidP384PublicKey(pub *ecdsa.PublicKey) bool {
+	return pub != nil &&
+		pub.Curve == elliptic.P384() &&
+		pub.X != nil && pub.Y != nil &&
+		pub.X.Sign() > 0 && pub.Y.Sign() > 0 &&
+		pub.Curve.IsOnCurve(pub.X, pub.Y)
+}
+
+func isValidP521PublicKey(pub *ecdsa.PublicKey) bool {
+	return pub != nil &&
+		pub.Curve == elliptic.P521() &&
+		pub.X != nil && pub.Y != nil &&
+		pub.X.Sign() > 0 && pub.Y.Sign() > 0 &&
+		pub.Curve.IsOnCurve(pub.X, pub.Y)
+}
+
+func isValidRSAPublicKey(pub *rsa.PublicKey) bool {
+	if pub == nil || pub.N == nil {
+		return false
+	}
+	bitLen := pub.N.BitLen()
+	if bitLen < 2048 || bitLen > 4096 || pub.N.Bit(0) == 0 {
+		return false
+	}
+	if pub.E < 65537 || pub.E > 2147483647 || pub.E%2 == 0 {
+		return false
+	}
+	return true
+}
+
 func cloneECDSAPublicKey(pub *ecdsa.PublicKey) *ecdsa.PublicKey {
 	if pub == nil {
 		return nil
@@ -535,6 +712,20 @@ func cloneECDSAPublicKey(pub *ecdsa.PublicKey) *ecdsa.PublicKey {
 		Curve: pub.Curve,
 		X:     new(big.Int).Set(pub.X),
 		Y:     new(big.Int).Set(pub.Y),
+	}
+}
+
+func cloneRSAPublicKey(pub *rsa.PublicKey) *rsa.PublicKey {
+	if pub == nil {
+		return nil
+	}
+	var n *big.Int
+	if pub.N != nil {
+		n = new(big.Int).Set(pub.N)
+	}
+	return &rsa.PublicKey{
+		N: n,
+		E: pub.E,
 	}
 }
 
@@ -549,6 +740,7 @@ func compileKeys(keys []Key) []compiledKey {
 			secret:        append([]byte(nil), k.Secret...),
 			ed25519Public: append(ed25519.PublicKey(nil), k.Ed25519Public...),
 			ecdsaPublic:   cloneECDSAPublicKey(k.ECDSAPublic),
+			rsaPublic:     cloneRSAPublicKey(k.RSAPublic),
 		}
 	}
 	return cKeys
@@ -566,7 +758,7 @@ func validateKeysList(keys []Key, alg Algorithm, strictSecret bool) error {
 		minHS = 48
 	case AlgHS512:
 		minHS = 64
-	case AlgEdDSA, AlgES256:
+	case AlgEdDSA, AlgES256, AlgES384, AlgES512, AlgRS256:
 	default:
 		return invalid("unsupported algorithm %q", string(alg))
 	}
@@ -596,6 +788,18 @@ func validateKeysList(keys []Key, alg Algorithm, strictSecret bool) error {
 		case alg == AlgES256:
 			if !isValidP256PublicKey(k.ECDSAPublic) {
 				return invalid("Keys[%d] (%q): ES256 needs a valid P-256 ECDSAPublic", i, k.ID)
+			}
+		case alg == AlgES384:
+			if !isValidP384PublicKey(k.ECDSAPublic) {
+				return invalid("Keys[%d] (%q): ES384 needs a valid P-384 ECDSAPublic", i, k.ID)
+			}
+		case alg == AlgES512:
+			if !isValidP521PublicKey(k.ECDSAPublic) {
+				return invalid("Keys[%d] (%q): ES512 needs a valid P-521 ECDSAPublic", i, k.ID)
+			}
+		case alg == AlgRS256:
+			if !isValidRSAPublicKey(k.RSAPublic) {
+				return invalid("Keys[%d] (%q): RS256 needs a valid RSA public key (2048-4096 bits)", i, k.ID)
 			}
 		}
 	}
@@ -637,8 +841,10 @@ func (v *Verifier) CanSign() bool {
 	switch v.alg {
 	case AlgEdDSA:
 		return len(v.edPriv) == ed25519.PrivateKeySize
-	case AlgES256:
+	case AlgES256, AlgES384, AlgES512:
 		return v.ecPriv != nil
+	case AlgRS256:
+		return v.rsaPriv != nil
 	default:
 		return len(v.secret) > 0
 	}
@@ -669,6 +875,7 @@ func (v *Verifier) Destroy() {
 		}
 	}
 	v.ecPriv = nil
+	v.rsaPriv = nil
 }
 
 func (v *Verifier) newHasher(sec []byte) hash.Hash {
@@ -770,7 +977,11 @@ func (v *Verifier) SignWithScratch(dst []byte, payloadJSON []byte, st *Scratch) 
 	enc := base64.RawURLEncoding
 	pEncLen := enc.EncodedLen(len(payloadJSON))
 	hdrLen := len(v.encodedHeaderDot)
-	totalLen := hdrLen + pEncLen + 1 + v.sigEncodedLen
+	sigEncLen := v.sigEncodedLen
+	if v.alg == AlgRS256 && v.rsaPriv != nil {
+		sigEncLen = enc.EncodedLen(v.rsaPriv.Size())
+	}
+	totalLen := hdrLen + pEncLen + 1 + sigEncLen
 
 	if cap(dst)-start < totalLen {
 		grown := make([]byte, start, start+totalLen)
@@ -801,10 +1012,43 @@ func (v *Verifier) SignWithScratch(dst []byte, payloadJSON []byte, st *Scratch) 
 			rr = rand.Reader
 		}
 		asn1Sig, err := ecdsa.SignASN1(rr, v.ecPriv, digest[:])
-		if err != nil || !decodeDERToP1363(asn1Sig, st.sumBuf[:64]) {
+		if err != nil || !decodeDERToP1363(asn1Sig, st.sigBuf[:64]) {
 			return dst[:start], ErrSigningFailed
 		}
-		sig = st.sumBuf[:64]
+		sig = st.sigBuf[:64]
+	case AlgES384:
+		digest := sha512.Sum384(signingInput)
+		rr := v.randReader
+		if rr == nil {
+			rr = rand.Reader
+		}
+		asn1Sig, err := ecdsa.SignASN1(rr, v.ecPriv, digest[:])
+		if err != nil || !decodeDERToP1363(asn1Sig, st.sigBuf[:96]) {
+			return dst[:start], ErrSigningFailed
+		}
+		sig = st.sigBuf[:96]
+	case AlgES512:
+		digest := sha512.Sum512(signingInput)
+		rr := v.randReader
+		if rr == nil {
+			rr = rand.Reader
+		}
+		asn1Sig, err := ecdsa.SignASN1(rr, v.ecPriv, digest[:])
+		if err != nil || !decodeDERToP1363(asn1Sig, st.sigBuf[:132]) {
+			return dst[:start], ErrSigningFailed
+		}
+		sig = st.sigBuf[:132]
+	case AlgRS256:
+		digest := sha256.Sum256(signingInput)
+		rr := v.randReader
+		if rr == nil {
+			rr = rand.Reader
+		}
+		rsaSig, err := rsa.SignPKCS1v15(rr, v.rsaPriv, crypto.SHA256, digest[:])
+		if err != nil {
+			return dst[:start], ErrSigningFailed
+		}
+		sig = rsaSig
 	default:
 		st.mac.Reset()
 		_, _ = st.mac.Write(signingInput)
@@ -814,7 +1058,7 @@ func (v *Verifier) SignWithScratch(dst []byte, payloadJSON []byte, st *Scratch) 
 	// 4. Append '.' and Base64URL-encoded signature
 	dst = append(dst, '.')
 	sigStart := len(dst)
-	dst = dst[:sigStart+v.sigEncodedLen]
+	dst = dst[:sigStart+sigEncLen]
 	enc.Encode(dst[sigStart:], sig)
 
 	return dst, nil
@@ -1131,11 +1375,25 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 	}
 
 	// 3. Decode signature into scratch buffer
+	var rsaPub *rsa.PublicKey
+	expectedSigLen := v.sigDecodedLen
+	if v.alg == AlgRS256 {
+		if keyIdx >= 0 {
+			rsaPub = ks.keys[keyIdx].rsaPublic
+		} else {
+			rsaPub = v.rsaPub
+		}
+		if rsaPub == nil {
+			return nil, ErrInvalidSignature
+		}
+		expectedSigLen = rsaPub.Size()
+	}
+
 	if enc.DecodedLen(len(sBytes)) > len(st.sigBuf) {
 		return nil, ErrInvalidSignature
 	}
 	nSig, err := enc.Decode(st.sigBuf[:], sBytes)
-	if err != nil || nSig != v.sigDecodedLen {
+	if err != nil || nSig != expectedSigLen {
 		return nil, ErrInvalidSignature
 	}
 
@@ -1158,12 +1416,49 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 		if pub == nil {
 			return nil, ErrInvalidSignature
 		}
-		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:32], st.sigBuf[32:64])
+		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:32], st.sigBuf[32:64], 32)
 		if !ok {
 			return nil, ErrInvalidSignature
 		}
 		digest := sha256.Sum256(tok[:signingInputLen])
 		if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
+			return nil, ErrInvalidSignature
+		}
+	case AlgES384:
+		pub := v.ecPub
+		if keyIdx >= 0 {
+			pub = ks.keys[keyIdx].ecdsaPublic
+		}
+		if pub == nil {
+			return nil, ErrInvalidSignature
+		}
+		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:48], st.sigBuf[48:96], 48)
+		if !ok {
+			return nil, ErrInvalidSignature
+		}
+		digest := sha512.Sum384(tok[:signingInputLen])
+		if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
+			return nil, ErrInvalidSignature
+		}
+	case AlgES512:
+		pub := v.ecPub
+		if keyIdx >= 0 {
+			pub = ks.keys[keyIdx].ecdsaPublic
+		}
+		if pub == nil {
+			return nil, ErrInvalidSignature
+		}
+		derSig, ok := encodeP1363ToDER(&st.derBuf, st.sigBuf[:66], st.sigBuf[66:132], 66)
+		if !ok {
+			return nil, ErrInvalidSignature
+		}
+		digest := sha512.Sum512(tok[:signingInputLen])
+		if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
+			return nil, ErrInvalidSignature
+		}
+	case AlgRS256:
+		digest := sha256.Sum256(tok[:signingInputLen])
+		if err := rsa.VerifyPKCS1v15(rsaPub, crypto.SHA256, digest[:], st.sigBuf[:nSig]); err != nil {
 			return nil, ErrInvalidSignature
 		}
 	default:
@@ -1483,8 +1778,12 @@ func matchAudienceClaim(val []byte, isStr bool, expectedAud []byte, capturedOut 
 	return matched
 }
 
-func encodeP1363ToDER(dst *[72]byte, r, s []byte) ([]byte, bool) {
-	return encodeP1363ToDERInto(dst[:], r, s, 32)
+func encodeP1363ToDER(dst *[144]byte, r, s []byte, coordLen ...int) ([]byte, bool) {
+	clen := 32
+	if len(coordLen) > 0 {
+		clen = coordLen[0]
+	}
+	return encodeP1363ToDERInto(dst[:], r, s, clen)
 }
 
 func encodeP1363ToDERInto(dst, r, s []byte, coordLen int) ([]byte, bool) {
@@ -1509,11 +1808,22 @@ func encodeP1363ToDERInto(dst, r, s []byte, coordLen int) ([]byte, bool) {
 	sLen := len(s) + sPad
 	seqLen := 2 + rLen + 2 + sLen
 
+	if len(dst) < seqLen+3 {
+		return nil, false
+	}
+
 	dst[0] = 0x30
-	dst[1] = byte(seqLen)
-	dst[2] = 0x02
-	dst[3] = byte(rLen)
-	idx := 4
+	idx := 2
+	if seqLen >= 128 {
+		dst[1] = 0x81
+		dst[2] = byte(seqLen)
+		idx = 3
+	} else {
+		dst[1] = byte(seqLen)
+	}
+	dst[idx] = 0x02
+	dst[idx+1] = byte(rLen)
+	idx += 2
 	if rPad == 1 {
 		dst[idx] = 0x00
 		idx++
@@ -1539,7 +1849,7 @@ func decodeDERToP1363(der, dst []byte) bool {
 	if der[1]&0x80 != 0 {
 		idx++
 	}
-	if idx >= len(der) || der[idx] != 0x02 {
+	if idx+1 >= len(der) || der[idx] != 0x02 {
 		return false
 	}
 	rLen := int(der[idx+1])

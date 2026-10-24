@@ -21,7 +21,8 @@ High-performance, zero-allocation JWT signing, verification, and JSON property s
 - [Cryptographic Algorithms](#cryptographic-algorithms)
   - [Symmetric: HS256, HS384, HS512](#1-symmetric-hmac-hs256-hs384-hs512)
   - [Asymmetric: EdDSA (Ed25519)](#2-asymmetric-eddsa-ed25519--rfc-8037)
-  - [Asymmetric: ES256 (ECDSA P-256)](#3-asymmetric-es256-ecdsa-p-256--rfc-7518)
+  - [Asymmetric: ES256, ES384, ES512 (ECDSA)](#3-asymmetric-es256-es384-es512-ecdsa--rfc-7518)
+  - [Asymmetric: RS256 (RSA PKCS#1 v1.5)](#4-asymmetric-rs256-rsa-pkcs1-v15--rfc-7518)
 - [RFC 7519 Validation & Claims](#rfc-7519-validation--claims)
   - [Single Unified Claims Struct](#single-unified-claims-struct)
   - [Clock Skew Tolerance (Leeway)](#clock-skew-tolerance-leeway)
@@ -144,12 +145,12 @@ Measured on Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 |                                                  ^                                                 |
 |                                                  | (Decodes directly into stack fields)            |
 |                                                  |                                                 |
-|  [ Scratch Workspace (3024 Bytes, Worker or Pool Managed) ]                                        |
+|  [ Scratch Workspace (3512 Bytes, Worker or Pool Managed) ]                                        |
 |  +----------------------------------------------------------------------------------------------+  |
 |  | - Pre-initialized HMAC hashers & rotation state (mac, keyMacs, keyVersion [8B])              |  |
-|  | - Signature Buffer: sigBuf [96B]                                                             |  |
+|  | - Signature Buffer: sigBuf [512B] (supports RSA-2048/3072/4096, ES512)                       |  |
 |  | - Checksum Buffer: sumBuf [64B]                                                              |  |
-|  | - DER Decode Buffer: derBuf [72B]                                                            |  |
+|  | - DER Decode Buffer: derBuf [144B] (P-256, P-384, P-521 long-form DER)                       |  |
 |  | - Header Scratch Buffer: hdrArr [128B] / hdrBuf                                              |  |
 |  | - Payload Scratch Buffer: payloadArr [1024B] / payloadBuf                                    |  |
 |  | - Signing Assembly Buffer: signArr [1544B] (Base64 Header + '.' + Payload)                   |  |
@@ -260,15 +261,36 @@ v, err := zerojwt.NewEd25519Verifier(pub, priv)
 vVerifOnly, err := zerojwt.NewEd25519Verifier(pub, nil)
 ```
 
-### 3. Asymmetric: ES256 (ECDSA P-256 / RFC 7518)
+### 3. Asymmetric: ES256, ES384, ES512 (ECDSA / RFC 7518)
 
-Validates NIST P-256 keys, cross-validates keypairs, and checks scalar bounds $1 \le D < N$:
+Validates NIST P-256, P-384, and P-521 keys with strict IEEE P1363 <-> ASN.1 DER conversion, keypair cross-validation, and scalar bounds $1 \le D < N$:
 
 ```go
-priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// ES256 (NIST P-256 with SHA-256)
+priv256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+v256, err := zerojwt.NewES256Verifier(&priv256.PublicKey, priv256)
 
-// Full signer + verifier
-v, err := zerojwt.NewES256Verifier(&priv.PublicKey, priv)
+// ES384 (NIST P-384 with SHA-384)
+priv384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+v384, err := zerojwt.NewES384Verifier(&priv384.PublicKey, priv384)
+
+// ES512 (NIST P-521 with SHA-512, handles 66-byte coordinates and long-form DER)
+priv521, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+v521, err := zerojwt.NewES512Verifier(&priv521.PublicKey, priv521)
+```
+
+### 4. Asymmetric: RS256 (RSA PKCS#1 v1.5 / RFC 7518)
+
+High-speed asymmetric verification (~28 µs/op with short public exponent $e = 65537$) with native compatibility for Auth0, Keycloak, Microsoft Entra ID, Google, and AWS Cognito:
+
+```go
+privRSA, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+// Full signer + verifier (cross-validates priv.PublicKey == pub and priv.Validate())
+vRSA, err := zerojwt.NewRS256Verifier(&privRSA.PublicKey, privRSA)
+
+// Verifier only (public key only: enforces 2048-4096 bit modulus, odd N, e >= 65537)
+vRSAOnly, err := zerojwt.NewRS256Verifier(&privRSA.PublicKey, nil)
 ```
 
 ---
@@ -483,7 +505,7 @@ err := v.UpdateKeys([]zerojwt.Key{
 Parse and ingest standard JSON Web Key Sets (RFC 7517) from Identity Providers (e.g. Auth0, Keycloak, Okta, AWS Cognito) with **0 external dependencies**:
 
 ```go
-// Pure Go JWKS parsing (supports oct, OKP/Ed25519, and EC/P-256):
+// Pure Go JWKS parsing (supports oct, OKP/Ed25519, EC P-256/P-384/P-521, and RSA 2048-4096):
 keys, err := zerojwt.ParseJWKS(jwksJSONBytes)
 
 // Or rotate the Verifier's key store directly from raw JWKS JSON without downtime:
@@ -491,8 +513,9 @@ err = v.UpdateKeysFromJWKS(jwksJSONBytes)
 ```
 
 #### Cryptographic & RFC Compliance Guarantees:
-- **Strict P-256 Coordinate Length (RFC 7518 §6.2.1.2 & §6.2.1.3)**: Coordinates `x` and `y` must be strictly 32 octets each. Non-canonical leading-zero truncation or zero-padded inflation are rejected.
-- **Wycheproof Curve Verification**: Validates public keys against curve equations (`elliptic.P256().IsOnCurve`), rejecting identity points $(0,0)$ and off-curve coordinates at parse time.
+- **Strict EC Coordinate Lengths (RFC 7518 §6.2.1.2 & §6.2.1.3)**: Coordinates `x` and `y` must be strictly 32 octets for P-256, 48 octets for P-384, and 66 octets for P-521. Non-canonical leading-zero truncation or zero-padded inflation are rejected.
+- **Strict RSA Key Validation (RFC 7518 §6.3)**: Leading zeros on `Base64urlUInt` encodings for `n` and `e` are prohibited (`nBytes[0] == 0 || eBytes[0] == 0`). Modulus $N$ must be odd and between 2048 and 4096 bits; public exponent $E$ must be odd with $65537 \le E \le 2^{31}-1$.
+- **Wycheproof Curve Verification**: Validates public keys against curve equations (`elliptic.Curve.IsOnCurve`), rejecting identity points $(0,0)$ and off-curve coordinates at parse time.
 - **RFC 7517 `use` & `key_ops` Matrix**:
   - `use`: strictly validated as a string; accepts `"sig"` and `"enc"`; rejects all other values.
   - `key_ops`: must be a non-empty JSON array of non-empty strings. Rejects conflicting assignments (e.g. `"use": "sig"` with encryption operations or `"use": "enc"` with signing operations). Chaves lacking `"verify"` are skipped without failing the JWKS document.
