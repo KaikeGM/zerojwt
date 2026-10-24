@@ -574,7 +574,7 @@ func TestV230_ConfigValidation(t *testing.T) {
 
 	// RS256 invalid private key (e.g. priv.Validate() failure)
 	corruptPriv := *validPriv
-	corruptPriv.D = big.NewInt(1)
+	corruptPriv.Primes = nil
 	if _, err := NewRS256Verifier(nil, &corruptPriv); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("expected ErrInvalidConfig for corrupt private key, got %v", err)
 	}
