@@ -273,4 +273,3 @@ func TestForwardAuthHandler_CRLFAndHeaderInjection(t *testing.T) {
 		t.Error("expected false for clean string")
 	}
 }
-
