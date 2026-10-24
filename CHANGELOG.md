@@ -5,6 +5,41 @@ All notable changes to `zerojwt` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.2.0] - 2026-10-24
+
+### Security & Cryptographic Hardening
+- **Strict RFC 7518 & Wycheproof P-256 EC Coordinate Validation (`v2/jwks.go`):**
+  - Enforced strict 32-octet length checks for NIST P-256 coordinates `x` and `y` per RFC 7518 §6.2.1.2 and §6.2.1.3, rejecting non-canonical leading-zero truncation and arbitrary zero-padded inflation.
+  - Validated coordinates against curve geometry via `isValidP256PublicKey`, rejecting points off the curve and the identity point $(0,0)$.
+- **Strict RFC 7517 `use` and `key_ops` Consistency (`v2/jwks.go`):**
+  - Enforced string type for `"use"` and permitted only `"sig"` and `"enc"`, failing closed on invalid values.
+  - Implemented `validateJWKSKeyOps`: requires `"key_ops"` to be a non-empty JSON array of non-empty strings, validates supported operations, and rejects conflicting assignments between `"use"` and `"key_ops"` (e.g. `"use": "sig"` with encryption ops or `"use": "enc"` with signing ops).
+  - Skips keys lacking the `"verify"` operation gracefully without failing the JWKS document.
+- **Strict Data Types, Algorithm Restrictions & Duplicate `kid` Rejection (`v2/jwks.go`):**
+  - Rejects non-string types for `"kty"`, `"kid"`, `"crv"`, `"k"`, `"x"`, and `"y"`.
+  - Rejects duplicate `"kid"` values within the same JWKS document to prevent key shadowing attacks.
+  - Validates `"alg"` cross-compatibility against key type, rejecting `"none"`, empty strings, and mismatched algorithm pairs.
+  - Rejects embedded carriage returns (`\r`) and newlines (`\n`) in Base64URL-encoded key materials.
+- **Defensive ECDSA Public Key Cloning (`v2/jwt.go`):**
+  - Defensively clones `ecdsa.PublicKey` coordinates (`X` and `Y` `big.Int`s) during Verifier initialization and dynamic key compilation (`cloneECDSAPublicKey`), guaranteeing thread-safe immutability against external mutation races.
+- **HTTP Header Injection & Response Splitting Prevention in ForwardAuth (`v2/middleware.go`):**
+  - Added `hasHTTPHeaderControlByte` in `ForwardAuthHandler`: inspects `Username()` and `Subject()` claims, rejecting tokens with ASCII control bytes (`< 0x20` or `0x7f`, such as `\r`, `\n`, `\x00`) with HTTP 401 Unauthorized before setting `X-Auth-User` or `X-Auth-Sub` headers upstream.
+
+### Performance & Micro-Optimizations
+- **Bounds Check Elimination (BCE) & SWAR Comparisons (`v2/scanner.go`):**
+  - Applied Bounds Check Elimination (BCE) assertions in critical JSON unescaping and escaping loops, eliminating slice index bounds checks in compiled assembly.
+  - Implemented fast whitespace lookup table (`wsLut`) and SWAR / LittleEndian word comparisons for delimiter scans.
+  - Separated fast-paths from slow-paths in `TrimJSONObject` and `TrimJSONArray` (`trimJSONObjectSlow` / `trimJSONArraySlow` marked `//go:noinline`), allowing fast-paths to inline fully within the compiler budget.
+- **Power-of-2 Bitwise Masking in `WorkerScratchGroup` (`v2/worker.go`):**
+  - Replaced modulo operator (`workerID % len(workers)`) with bitwise masking (`workerID & w.mask`) where `w.mask = uint32(n - 1)`, reducing worker routing overhead to a single CPU cycle.
+- **Stack-Allocated ES256 Split Verification (`v2/split.go`):**
+  - Replaced heap-allocating `sha256.New()` with stack-based `sha256.Sum256` in `verifySplitSignatureAndDecodePayload`, ensuring zero heap allocations on split buffer verification.
+  - Short-circuited `stitchSigningInput` to return `part1` directly when `len(part2) == 0`.
+- **Parametrized IEEE P1363 <-> ASN.1 DER Converters (`v2/jwt.go`):**
+  - Parametrized stack-based conversion by coordinate length (`coordLen := len(dst) / 2`), supporting P-256 (32 bytes) and P-384 (48 bytes) with zero heap allocations.
+- **Updated Profile-Guided Optimization (`v2/default.pgo`):**
+  - Regenerated `default.pgo` to match the newly optimized function layout and call site offsets, reducing parallel verification latency to ~145 ns/op.
+
 ---
 
 ## [v2.1.3] - 2026-10-22

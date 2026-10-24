@@ -577,6 +577,25 @@ func TestValidationErrorsAndBadConfigs(t *testing.T) {
 		t.Fatalf("expected ErrInvalidConfig for ES256 private key with D>=N, got %v", err)
 	}
 
+	// ES256 public key with nil coordinates or off-curve coordinates (GO-2022-0435 / GO-2024-2454)
+	nilCoordPub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: nil, Y: nil}
+	_, err = zerojwt.New(nil, zerojwt.Options{Algorithm: zerojwt.AlgES256, ECDSAPublicKey: nilCoordPub})
+	if !errors.Is(err, zerojwt.ErrInvalidConfig) {
+		t.Fatalf("expected ErrInvalidConfig for ES256 pub key with nil coordinates, got %v", err)
+	}
+	offCurvePub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: big.NewInt(1), Y: big.NewInt(1)}
+	_, err = zerojwt.New(nil, zerojwt.Options{Algorithm: zerojwt.AlgES256, ECDSAPublicKey: offCurvePub})
+	if !errors.Is(err, zerojwt.ErrInvalidConfig) {
+		t.Fatalf("expected ErrInvalidConfig for off-curve ES256 pub key, got %v", err)
+	}
+	_, err = zerojwt.New(nil, zerojwt.Options{
+		Algorithm: zerojwt.AlgES256,
+		Keys:      []zerojwt.Key{{ID: "k-off", ECDSAPublic: offCurvePub}},
+	})
+	if !errors.Is(err, zerojwt.ErrInvalidConfig) {
+		t.Fatalf("expected ErrInvalidConfig for off-curve ES256 key in Keys, got %v", err)
+	}
+
 	// Leeway < 1s
 	_, err = zerojwt.New(bytes.Repeat([]byte("a"), 32), zerojwt.Options{Leeway: 500 * time.Millisecond})
 	if !errors.Is(err, zerojwt.ErrInvalidConfig) {

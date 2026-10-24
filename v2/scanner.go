@@ -1,6 +1,8 @@
 package zerojwt
 
-import "bytes"
+import (
+	"encoding/binary"
+)
 
 var (
 	hexLut     [256]uint8
@@ -127,7 +129,7 @@ func NextArrayElement(b []byte) (val []byte, isStr bool, rest []byte, ok bool) {
 	if !ok {
 		return nil, false, nil, false
 	}
-	return val, isStr, bytes.TrimSpace(b[nextIdx:]), true
+	return val, isStr, trimJSONWS(b[nextIdx:]), true
 }
 
 func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok bool) {
@@ -136,9 +138,9 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		isStr = true
 		i++
 		vStart := i
-		// Unrolled 4-byte fast scan for clean ASCII string characters
-		for i+4 <= n {
-			if escapeLut[b[i]] || escapeLut[b[i+1]] || escapeLut[b[i+2]] || escapeLut[b[i+3]] {
+		// Unrolled 4-byte fast scan with BCE via slice windowing
+		for rem := b[i:]; len(rem) >= 4; rem = rem[4:] {
+			if escapeLut[rem[0]] || escapeLut[rem[1]] || escapeLut[rem[2]] || escapeLut[rem[3]] {
 				break
 			}
 			i += 4
@@ -160,11 +162,11 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		return val, true, i + 1, true
 	} else if b[i] == '{' || b[i] == '[' {
 		var stack [32]byte
-		sp := 0
+		sp := uint(0)
 		if b[i] == '{' {
-			stack[sp] = '}'
+			stack[0] = '}'
 		} else {
-			stack[sp] = ']'
+			stack[0] = ']'
 		}
 		sp++
 		vStart := i
@@ -187,20 +189,20 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 			case '"':
 				inS = true
 			case '{':
-				if sp >= len(stack) {
+				if sp >= uint(len(stack)) {
 					return nil, false, 0, false
 				}
-				stack[sp] = '}'
+				stack[sp&31] = '}'
 				sp++
 			case '[':
-				if sp >= len(stack) {
+				if sp >= uint(len(stack)) {
 					return nil, false, 0, false
 				}
-				stack[sp] = ']'
+				stack[sp&31] = ']'
 				sp++
 			case '}', ']':
 				sp--
-				if stack[sp] != c {
+				if stack[sp&31] != c {
 					return nil, false, 0, false
 				}
 			}
@@ -211,18 +213,21 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		}
 		return b[vStart:i], false, i, true
 	} else if b[i] == 't' {
-		if i+4 <= n && b[i+1] == 'r' && b[i+2] == 'u' && b[i+3] == 'e' && (i+4 == n || numEndLut[b[i+4]]) {
-			return b[i : i+4], false, i + 4, true
+		// 0x65757274 is "true" in little-endian uint32
+		if rem := b[i:]; len(rem) >= 4 && binary.LittleEndian.Uint32(rem) == 0x65757274 && (len(rem) == 4 || numEndLut[rem[4]]) {
+			return rem[:4], false, i + 4, true
 		}
 		return nil, false, 0, false
 	} else if b[i] == 'f' {
-		if i+5 <= n && b[i+1] == 'a' && b[i+2] == 'l' && b[i+3] == 's' && b[i+4] == 'e' && (i+5 == n || numEndLut[b[i+5]]) {
-			return b[i : i+5], false, i + 5, true
+		// 0x736c6166 is "fals" in little-endian uint32
+		if rem := b[i:]; len(rem) >= 5 && binary.LittleEndian.Uint32(rem) == 0x736c6166 && rem[4] == 'e' && (len(rem) == 5 || numEndLut[rem[5]]) {
+			return rem[:5], false, i + 5, true
 		}
 		return nil, false, 0, false
 	} else if b[i] == 'n' {
-		if i+4 <= n && b[i+1] == 'u' && b[i+2] == 'l' && b[i+3] == 'l' && (i+4 == n || numEndLut[b[i+4]]) {
-			return b[i : i+4], false, i + 4, true
+		// 0x6c6c756e is "null" in little-endian uint32
+		if rem := b[i:]; len(rem) >= 4 && binary.LittleEndian.Uint32(rem) == 0x6c6c756e && (len(rem) == 4 || numEndLut[rem[4]]) {
+			return rem[:4], false, i + 4, true
 		}
 		return nil, false, 0, false
 	} else if b[i] == '-' || (b[i] >= '0' && b[i] <= '9') {
@@ -273,22 +278,48 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 	return nil, false, 0, false
 }
 
+func trimJSONWS(b []byte) []byte {
+	for len(b) > 0 && wsLut[b[0]] {
+		b = b[1:]
+	}
+	for len(b) > 0 && wsLut[b[len(b)-1]] {
+		b = b[:len(b)-1]
+	}
+	return b
+}
+
 // TrimJSONObject trims outer whitespace and verifies/strips enclosing '{' and '}'.
 func TrimJSONObject(b []byte) ([]byte, bool) {
-	b = bytes.TrimSpace(b)
+	if len(b) >= 2 && b[0] == '{' && b[len(b)-1] == '}' && !wsLut[b[1]] && !wsLut[b[len(b)-2]] {
+		return b[1 : len(b)-1], true
+	}
+	return trimJSONObjectSlow(b)
+}
+
+//go:noinline
+func trimJSONObjectSlow(b []byte) ([]byte, bool) {
+	b = trimJSONWS(b)
 	if len(b) < 2 || b[0] != '{' || b[len(b)-1] != '}' {
 		return nil, false
 	}
-	return bytes.TrimSpace(b[1 : len(b)-1]), true
+	return trimJSONWS(b[1 : len(b)-1]), true
 }
 
 // TrimJSONArray strips surrounding whitespace and outer '[' and ']' brackets from a JSON array.
 func TrimJSONArray(b []byte) ([]byte, bool) {
-	b = bytes.TrimSpace(b)
+	if len(b) >= 2 && b[0] == '[' && b[len(b)-1] == ']' && !wsLut[b[1]] && !wsLut[b[len(b)-2]] {
+		return b[1 : len(b)-1], true
+	}
+	return trimJSONArraySlow(b)
+}
+
+//go:noinline
+func trimJSONArraySlow(b []byte) ([]byte, bool) {
+	b = trimJSONWS(b)
 	if len(b) < 2 || b[0] != '[' || b[len(b)-1] != ']' {
 		return nil, false
 	}
-	return bytes.TrimSpace(b[1 : len(b)-1]), true
+	return trimJSONWS(b[1 : len(b)-1]), true
 }
 
 // ParseNumeric parses a JSON number (integer or floating point, e.g. Unix timestamps) without allocations.
@@ -471,6 +502,7 @@ func UnescapeJSONInPlace(s []byte) []byte {
 }
 
 func encodeRuneToUTF8(dst []byte, r rune) int {
+	_ = dst[3] // BCE hint: callers always pass dst with len >= 4
 	if r <= 0x7F {
 		dst[0] = byte(r)
 		return 1
@@ -501,9 +533,11 @@ func AppendEscapedJSON[S StringLike](dst []byte, s S) []byte {
 	i := 0
 	n := len(s)
 	for i < n {
-		for i+8 <= n &&
-			!escapeLut[s[i]] && !escapeLut[s[i+1]] && !escapeLut[s[i+2]] && !escapeLut[s[i+3]] &&
-			!escapeLut[s[i+4]] && !escapeLut[s[i+5]] && !escapeLut[s[i+6]] && !escapeLut[s[i+7]] {
+		for rem := s[i:]; len(rem) >= 8; rem = rem[8:] {
+			if escapeLut[rem[0]] || escapeLut[rem[1]] || escapeLut[rem[2]] || escapeLut[rem[3]] ||
+				escapeLut[rem[4]] || escapeLut[rem[5]] || escapeLut[rem[6]] || escapeLut[rem[7]] {
+				break
+			}
 			i += 8
 		}
 		for i < n && !escapeLut[s[i]] {

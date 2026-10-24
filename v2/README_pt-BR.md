@@ -139,19 +139,20 @@ Medido em Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 |  | - Claims Int64: iat, nbf, exp (24 bytes)                                                     |  |
 |  | - Comprimentos e Flags: subLen, issLen, audLen, userLen, jtiLen, presentFlags (32 bytes)     |  |
 |  | - Padding Explícito: 6 bytes (alinhamento em 8 bytes)                                        |  |
-|  | - Buffers Contíguos: sub [256B], iss [256B], aud [256B], user [128B], jti [64B]             |  |
+|  | - Buffers Contíguos: sub [256B], iss [256B], aud [256B], user [128B], jti [64B]              |  |
 |  +----------------------------------------------------------------------------------------------+  |
 |                                                  ^                                                 |
 |                                                  | (Decodifica direto nos campos da pilha)         |
 |                                                  |                                                 |
-|  [ Workspace Scratch (1472 Bytes, Gerenciado por Worker ou Pool) ]                                 |
+|  [ Workspace Scratch (3024 Bytes, Gerenciado por Worker ou Pool) ]                                 |
 |  +----------------------------------------------------------------------------------------------+  |
-|  | - Hashers HMAC pré-inicializados (mac, keyMacs)                                              |  |
+|  | - Hashers HMAC pré-inicializados e versão de chaves (mac, keyMacs, keyVersion [8B])          |  |
 |  | - Buffer de Assinatura: sigBuf [96B]                                                         |  |
-|  | - Buffer de Checksum: sumBuf [64B]                                                            |  |
+|  | - Buffer de Checksum: sumBuf [64B]                                                           |  |
 |  | - Buffer de Decodificação DER: derBuf [72B]                                                  |  |
-|  | - Buffer Scratch de Cabeçalho: hdrBuf [128B]                                                 |  |
-|  | - Buffer Scratch de Payload: payloadBuf [1024B]                                              |  |
+|  | - Buffer Scratch de Cabeçalho: hdrArr [128B] / hdrBuf                                        |  |
+|  | - Buffer Scratch de Payload: payloadArr [1024B] / payloadBuf                                 |  |
+|  | - Buffer de Montagem de Assinatura: signArr [1544B] (Base64 Header + '.' + Payload)          |  |
 |  +----------------------------------------------------------------------------------------------+  |
 |                                                                                                    |
 |  -> Zero alocações dinâmicas na heap                                                               |
@@ -489,6 +490,18 @@ keys, err := zerojwt.ParseJWKS(jwksJSONBytes)
 err = v.UpdateKeysFromJWKS(jwksJSONBytes)
 ```
 
+#### Garantias Criptográficas e Conformidade com as RFCs:
+- **Tamanho Estrito de Coordenadas P-256 (RFC 7518 §6.2.1.2 e §6.2.1.3)**: Coordenadas `x` e `y` devem conter exatamente 32 octetos. Truncamento de zeros à esquerda ou preenchimento com zeros adicionais são estritamente rejeitados.
+- **Verificação de Curva no Padrão Wycheproof**: Valida chaves públicas contra a geometria da curva P-256 (`elliptic.P256().IsOnCurve`), rejeitando o ponto no infinito $(0,0)$ e coordenadas fora da curva já no momento do parse.
+- **Matriz de Operações `use` e `key_ops` (RFC 7517)**:
+  - `use`: estritamente validado como string; aceita apenas `"sig"` e `"enc"`; rejeita qualquer outro valor.
+  - `key_ops`: deve ser um array JSON não-vazio de strings não-vazias. Rejeita configurações conflitantes (ex.: `"use": "sig"` com operações de criptografia ou `"use": "enc"` com operações de assinatura). Chaves sem a permissão `"verify"` são ignoradas sem falhar o JWKS.
+- **Integridade de Tipos de Dados e Identificadores**:
+  - Rejeita tipos não-string para `kty`, `kid`, `crv`, `k`, `x` e `y`.
+  - Rejeita valores de `kid` duplicados no mesmo documento para mitigar ataques de mascaramento de chaves (*key shadowing*).
+  - Rejeita divergências de algoritmo (`"alg": "ES256"` em chave `oct`, ou `"alg": "none"`).
+  - Decodificação Base64URL estrita rejeita caracteres `\r` e `\n`.
+
 ---
 
 ## Middlewares HTTP de Alta Performance
@@ -576,6 +589,10 @@ http:
           - "X-Auth-Sub"
 ```
 
+> [!IMPORTANT]
+> **Prevenção contra Injeção de Cabeçalhos HTTP e Response Splitting (CWE-113)**:  
+> O `ForwardAuthHandler` inspeciona rigorosamente as claims `Username()` e `Subject()` antes de emitir os cabeçalhos de identidade. Se qualquer caractere de controle ASCII (`< 0x20` ou `0x7f`, como `\r`, `\n` ou `\x00`) for encontrado, o handler encerra imediatamente com `401 Unauthorized` e suprime qualquer injeção de cabeçalhos, impedindo ataques de poluição de cache ou injeção de headers no Nginx e Traefik.
+
 ---
 
 ## Endurecimento de Segurança e Higiene de Memória
@@ -588,6 +605,12 @@ http:
    Por padrão, tokens sem `exp` são rejeitados (`ErrMissingExp`), em conformidade com OIDC Core 1.0 §3.1.3.7 e RFC 9068 §2.2.
 4. **Validação de Tamanho Mínimo de Chave**:  
    Segredos menores que o tamanho do hash são rejeitados na inicialização com `ErrInvalidConfig` (`ErrInsecureSecret`) conforme RFC 7518 §3.2.
+5. **Clonagem Defensiva de Material de Chaves**:  
+   Para prevenir condições de corrida e mutações concorrentes externas, as coordenadas de `ecdsa.PublicKey` (`big.Int`s `X` e `Y`) e slices de segredos brutos são copiados em profundidade para estruturas internas privadas durante a compilação (`compileKeys`), garantindo verificadores imutáveis e 100% thread-safe.
+6. **Validação Rigorosa de Coordenadas e Geometria da Curva**:  
+   Chaves de curvas elípticas são verificadas contra as equações da curva durante o parse e registro (`isValidP256PublicKey`), rejeitando pontos fora da curva P-256 e o ponto no infinito $(0,0)$.
+7. **Imunidade contra Injeção de Headers e CRLF**:  
+   Cabeçalhos emitidos para proxies reversos pelo `ForwardAuthHandler` falham em modo fechado caso qualquer caractere de controle ASCII esteja presente nas claims de usuário ou subject.
 
 ---
 

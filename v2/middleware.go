@@ -56,7 +56,7 @@ func ClaimsFromContext(ctx context.Context) (*Claims, bool) {
 
 // FromContext retrieves the verified *Claims from a request context, returning nil if not present.
 func FromContext(ctx context.Context) *Claims {
-	c, _ := ClaimsFromContext(ctx)
+	c, _ := ctx.Value(claimsContextKey{}).(*Claims)
 	return c
 }
 
@@ -141,6 +141,12 @@ func (v *Verifier) ForwardAuthHandler(opts ...ForwardAuthOptions) http.HandlerFu
 			return
 		}
 
+		if (claims.HasUsername && hasHTTPHeaderControlByte(claims.Username())) ||
+			(claims.HasSub && hasHTTPHeaderControlByte(claims.Subject())) {
+			unauthorized()
+			return
+		}
+
 		if userHdr != "-" {
 			if claims.HasUsername {
 				w.Header().Set(userHdr, string(claims.Username()))
@@ -158,4 +164,13 @@ func (v *Verifier) ForwardAuthHandler(opts ...ForwardAuthOptions) http.HandlerFu
 
 		w.WriteHeader(http.StatusOK)
 	}
+}
+
+func hasHTTPHeaderControlByte(b []byte) bool {
+	for i := 0; i < len(b); i++ {
+		if b[i] < 0x20 || b[i] == 0x7f {
+			return true
+		}
+	}
+	return false
 }

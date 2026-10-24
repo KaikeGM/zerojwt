@@ -198,3 +198,79 @@ func TestContextClaimHelpers(t *testing.T) {
 		t.Errorf("expected nil claims from empty context, got %v", c)
 	}
 }
+
+func TestForwardAuthHandler_CRLFAndHeaderInjection(t *testing.T) {
+	secret := []byte("secret-number-1-must-be-at-least-32-bytes!!")
+	v, err := New(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := v.ForwardAuthHandler()
+
+	// 1. CRLF in Username claim
+	signer1 := v.NewSigner(nil)
+	signer1.SetSubject("normal-sub")
+	signer1.SetUsername("admin\r\nX-Injected: evil")
+	signer1.SetExpiresAt(time.Now().Unix() + 3600)
+	tok1, err := signer1.Sign()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req1 := httptest.NewRequest("GET", "/auth", nil)
+	req1.Header.Set("Authorization", "Bearer "+string(tok1))
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for CRLF in username, got %d", rec1.Code)
+	}
+
+	// 2. CRLF in Subject claim
+	signer2 := v.NewSigner(nil)
+	signer2.SetSubject("evil\nSet-Cookie: session=pwned")
+	signer2.SetExpiresAt(time.Now().Unix() + 3600)
+	tok2, err := signer2.Sign()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req2 := httptest.NewRequest("GET", "/auth", nil)
+	req2.Header.Set("Authorization", "Bearer "+string(tok2))
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for CRLF in subject, got %d", rec2.Code)
+	}
+
+	// 3. Control byte \x7f (DEL) and \x00 in Subject claim
+	signer3 := v.NewSigner(nil)
+	signer3.SetSubject("evil\x7fuser")
+	signer3.SetExpiresAt(time.Now().Unix() + 3600)
+	tok3, err := signer3.Sign()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req3 := httptest.NewRequest("GET", "/auth", nil)
+	req3.Header.Set("Authorization", "Bearer "+string(tok3))
+	rec3 := httptest.NewRecorder()
+	handler.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for DEL in subject, got %d", rec3.Code)
+	}
+
+	// 4. hasHTTPHeaderControlByte direct tests
+	if !hasHTTPHeaderControlByte([]byte("test\r\n")) {
+		t.Error("expected true for CRLF")
+	}
+	if !hasHTTPHeaderControlByte([]byte("test\x00")) {
+		t.Error("expected true for null byte")
+	}
+	if !hasHTTPHeaderControlByte([]byte("test\x7f")) {
+		t.Error("expected true for DEL")
+	}
+	if hasHTTPHeaderControlByte([]byte("clean-user_123.valid")) {
+		t.Error("expected false for clean string")
+	}
+}
+

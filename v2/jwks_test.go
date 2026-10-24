@@ -330,3 +330,122 @@ func TestJWKS_RFC7517_Interoperability(t *testing.T) {
 		t.Fatalf("expected ErrInvalidJWKS for enc-only JWKS, got %v", err)
 	}
 }
+
+func TestJWKS_KeyOpsAndAlgValidation(t *testing.T) {
+	validSec := base64.RawURLEncoding.EncodeToString([]byte("01234567890123456789012345678901"))
+
+	edPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b64EdPub := base64.RawURLEncoding.EncodeToString(edPub)
+
+	ecPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xBuf, yBuf [32]byte
+	ecPriv.X.FillBytes(xBuf[:])
+	ecPriv.Y.FillBytes(yBuf[:])
+	b64X := base64.RawURLEncoding.EncodeToString(xBuf[:])
+	b64Y := base64.RawURLEncoding.EncodeToString(yBuf[:])
+
+	// 1. Valid key_ops combinations and algorithm matches
+	validCases := []string{
+		// oct with verify only
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "key_ops": ["verify"], "alg": "HS256"}]}`, validSec),
+		// oct with sign and verify
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k2", "k": "%s", "key_ops": ["sign", "verify"], "alg": "HS384"}]}`, validSec),
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k3", "k": "%s", "key_ops": ["verify"], "alg": "HS512"}]}`, validSec),
+		// OKP with EdDSA
+		fmt.Sprintf(`{"keys": [{"kty": "OKP", "kid": "k4", "crv": "Ed25519", "x": "%s", "key_ops": ["verify"], "alg": "EdDSA"}]}`, b64EdPub),
+		// EC with ES256
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k5", "crv": "P-256", "x": "%s", "y": "%s", "key_ops": ["verify"], "alg": "ES256"}]}`, b64X, b64Y),
+		// Skipping non-verifying key (key_ops: ["encrypt"]) when another valid key exists
+		fmt.Sprintf(`{"keys": [
+			{"kty": "oct", "kid": "k-enc", "k": "%s", "key_ops": ["encrypt", "decrypt", "wrapKey", "unwrapKey", "deriveKey", "deriveBits"]},
+			{"kty": "oct", "kid": "k-sig", "k": "%s", "key_ops": ["verify"]}
+		]}`, validSec, validSec),
+	}
+
+	for i, jwks := range validCases {
+		keys, err := ParseJWKS([]byte(jwks))
+		if err != nil {
+			t.Fatalf("case %d: expected success, got error %v", i, err)
+		}
+		if len(keys) == 0 {
+			t.Fatalf("case %d: expected keys, got 0", i)
+		}
+	}
+
+	// 2. Invalid JWKS cases covering RFC 7517 / RFC 7518 rules and Wycheproof vectors
+	invalidCases := []string{
+		// key_ops is string instead of array
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "key_ops": "verify"}]}`, validSec),
+		// key_ops is not array
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "key_ops": 123}]}`, validSec),
+		// key_ops is empty array
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "key_ops": []}]}`, validSec),
+		// key_ops contains non-string
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "key_ops": [123]}]}`, validSec),
+		// key_ops contains empty string
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "key_ops": [""]}]}`, validSec),
+		// key_ops contains unknown op
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "key_ops": ["unknown"]}]}`, validSec),
+		// use: "sig" with encrypt key_ops
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "use": "sig", "key_ops": ["encrypt"]}]}`, validSec),
+		// use: "enc" with verify key_ops
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "use": "enc", "key_ops": ["verify"]}]}`, validSec),
+		// use: "enc" with sign key_ops
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "use": "enc", "key_ops": ["sign"]}]}`, validSec),
+		// invalid use string
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "use": "invalid"}]}`, validSec),
+		// empty use string
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "use": ""}]}`, validSec),
+		// non-string property types:
+		fmt.Sprintf(`{"keys": [{"kty": 123, "kid": "k1", "k": "%s"}]}`, validSec),
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": 123, "k": "%s"}]}`, validSec),
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "use": 123, "k": "%s"}]}`, validSec),
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "alg": 123, "k": "%s"}]}`, validSec),
+		fmt.Sprintf(`{"keys": [{"kty": "OKP", "kid": "k1", "crv": 123, "x": "%s"}]}`, b64EdPub),
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": 123}]}`),
+		fmt.Sprintf(`{"keys": [{"kty": "OKP", "kid": "k1", "crv": "Ed25519", "x": 123}]}`),
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k1", "crv": "P-256", "x": "%s", "y": 123}]}`, b64X),
+		// empty alg
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "alg": ""}]}`, validSec),
+		// mismatched alg
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "%s", "alg": "ES256"}]}`, validSec),
+		fmt.Sprintf(`{"keys": [{"kty": "OKP", "kid": "k1", "crv": "Ed25519", "x": "%s", "alg": "HS256"}]}`, b64EdPub),
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k1", "crv": "P-256", "x": "%s", "y": "%s", "alg": "HS256"}]}`, b64X, b64Y),
+		// duplicate kid
+		fmt.Sprintf(`{"keys": [
+			{"kty": "oct", "kid": "dup-id", "k": "%s"},
+			{"kty": "oct", "kid": "dup-id", "k": "%s"}
+		]}`, validSec, validSec),
+		// Base64 with carriage return or newline
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "MDEyMzQ1Njc4OTAxMjM0NTY3OD\nkwMTIzNDU2Nzg5MDE"}]}`),
+		fmt.Sprintf(`{"keys": [{"kty": "oct", "kid": "k1", "k": "MDEyMzQ1Njc4OTAxMjM0NTY3OD\rkwMTIzNDU2Nzg5MDE"}]}`),
+		// EC coordinate lengths not exactly 32 octets (RFC 7518 §6.2.1.2 Wycheproof vectors):
+		// 31-byte X coordinate
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k1", "crv": "P-256", "x": "%s", "y": "%s"}]}`,
+			base64.RawURLEncoding.EncodeToString(make([]byte, 31)), b64Y),
+		// 33-byte X coordinate
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k1", "crv": "P-256", "x": "%s", "y": "%s"}]}`,
+			base64.RawURLEncoding.EncodeToString(make([]byte, 33)), b64Y),
+		// 31-byte Y coordinate
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k1", "crv": "P-256", "x": "%s", "y": "%s"}]}`,
+			b64X, base64.RawURLEncoding.EncodeToString(make([]byte, 31))),
+		// 33-byte Y coordinate
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k1", "crv": "P-256", "x": "%s", "y": "%s"}]}`,
+			b64X, base64.RawURLEncoding.EncodeToString(make([]byte, 33))),
+		// Invalid base64 in Y
+		fmt.Sprintf(`{"keys": [{"kty": "EC", "kid": "k1", "crv": "P-256", "x": "%s", "y": "!!!"}]}`, b64X),
+	}
+
+	for i, jwks := range invalidCases {
+		if _, err := ParseJWKS([]byte(jwks)); err == nil {
+			t.Errorf("case %d: expected error for invalid JWKS %s, got nil", i, jwks)
+		}
+	}
+}
+

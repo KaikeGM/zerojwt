@@ -115,7 +115,6 @@ func (v *Verifier) IterWithScratch(tok []byte, now int64, st *Scratch) iter.Seq2
 		}
 
 		// Pass 2: Token is 100% valid; yield verified claims
-		body, _ = TrimJSONObject(plBytes)
 		for len(body) > 0 {
 			key, val, isStr, rest, _ := NextJSONProp(body)
 			body = rest
@@ -204,7 +203,6 @@ func (v *Verifier) IterSplitWithScratch(head, tail []byte, now int64, st *Scratc
 		}
 
 		// Pass 2: Token is 100% valid; yield verified claims
-		body, _ = TrimJSONObject(plBytes)
 		for len(body) > 0 {
 			key, val, isStr, rest, _ := NextJSONProp(body)
 			body = rest

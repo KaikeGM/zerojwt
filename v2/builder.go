@@ -12,7 +12,6 @@ type SignBuilder struct {
 	dst    []byte
 	buf    []byte
 	start  int
-	hasAny bool
 	hasExp bool
 	owned  bool
 }
@@ -49,10 +48,9 @@ func (v *Verifier) NewSignerWithScratch(dst []byte, st *Scratch) SignBuilder {
 }
 
 func (b *SignBuilder) appendKey(key string) {
-	if b.hasAny {
+	if len(b.buf) > 1 {
 		b.buf = append(b.buf, ',')
 	}
-	b.hasAny = true
 	b.buf = AppendEscapedJSON(b.buf, key)
 	b.buf = append(b.buf, ':')
 }
@@ -179,13 +177,16 @@ func (b *SignBuilder) Sign() ([]byte, error) {
 	if b.st == nil {
 		return b.dst[:b.start], ErrInvalidPayload
 	}
-	defer b.Discard()
 	if len(b.buf)+1 > len(b.st.payloadBuf) {
+		b.Discard()
 		return b.dst[:b.start], ErrPayloadTooLarge
 	}
 	if b.v.requireExp && !b.hasExp {
+		b.Discard()
 		return b.dst[:b.start], ErrMissingExp
 	}
 	b.buf = append(b.buf, '}')
-	return b.v.SignWithScratch(b.dst, b.buf, b.st)
+	res, err := b.v.SignWithScratch(b.dst, b.buf, b.st)
+	b.Discard()
+	return res, err
 }

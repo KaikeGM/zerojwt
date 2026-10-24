@@ -139,19 +139,20 @@ Measured on Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 |  | - Int64 claims: iat, nbf, exp (24 bytes)                                                     |  |
 |  | - Lengths & Flags: subLen, issLen, audLen, userLen, jtiLen, presentFlags (32 bytes)          |  |
 |  | - Padding: explicit 6 bytes (word alignment)                                                 |  |
-|  | - Inline Buffers: sub [256B], iss [256B], aud [256B], user [128B], jti [64B]                |  |
+|  | - Inline Buffers: sub [256B], iss [256B], aud [256B], user [128B], jti [64B]                 |  |
 |  +----------------------------------------------------------------------------------------------+  |
 |                                                  ^                                                 |
 |                                                  | (Decodes directly into stack fields)            |
 |                                                  |                                                 |
-|  [ Scratch Workspace (1472 Bytes, Worker or Pool Managed) ]                                        |
+|  [ Scratch Workspace (3024 Bytes, Worker or Pool Managed) ]                                        |
 |  +----------------------------------------------------------------------------------------------+  |
-|  | - Pre-initialized HMAC hashers (mac, keyMacs)                                                |  |
+|  | - Pre-initialized HMAC hashers & rotation state (mac, keyMacs, keyVersion [8B])              |  |
 |  | - Signature Buffer: sigBuf [96B]                                                             |  |
 |  | - Checksum Buffer: sumBuf [64B]                                                              |  |
 |  | - DER Decode Buffer: derBuf [72B]                                                            |  |
-|  | - Header Scratch Buffer: hdrBuf [128B]                                                       |  |
-|  | - Payload Scratch Buffer: payloadBuf [1024B]                                                 |  |
+|  | - Header Scratch Buffer: hdrArr [128B] / hdrBuf                                              |  |
+|  | - Payload Scratch Buffer: payloadArr [1024B] / payloadBuf                                    |  |
+|  | - Signing Assembly Buffer: signArr [1544B] (Base64 Header + '.' + Payload)                   |  |
 |  +----------------------------------------------------------------------------------------------+  |
 |                                                                                                    |
 |  -> Zero dynamic heap allocations                                                                  |
@@ -489,6 +490,18 @@ keys, err := zerojwt.ParseJWKS(jwksJSONBytes)
 err = v.UpdateKeysFromJWKS(jwksJSONBytes)
 ```
 
+#### Cryptographic & RFC Compliance Guarantees:
+- **Strict P-256 Coordinate Length (RFC 7518 §6.2.1.2 & §6.2.1.3)**: Coordinates `x` and `y` must be strictly 32 octets each. Non-canonical leading-zero truncation or zero-padded inflation are rejected.
+- **Wycheproof Curve Verification**: Validates public keys against curve equations (`elliptic.P256().IsOnCurve`), rejecting identity points $(0,0)$ and off-curve coordinates at parse time.
+- **RFC 7517 `use` & `key_ops` Matrix**:
+  - `use`: strictly validated as a string; accepts `"sig"` and `"enc"`; rejects all other values.
+  - `key_ops`: must be a non-empty JSON array of non-empty strings. Rejects conflicting assignments (e.g. `"use": "sig"` with encryption operations or `"use": "enc"` with signing operations). Chaves lacking `"verify"` are skipped without failing the JWKS document.
+- **Data Type & Key ID Integrity**:
+  - Rejects non-string types for `kty`, `kid`, `crv`, `k`, `x`, and `y`.
+  - Rejects duplicate `kid` values within the document to prevent key shadowing.
+  - Rejects algorithm mismatch (`"alg": "ES256"` on an `oct` key, or `"alg": "none"`).
+  - Strict Base64URL decoding rejects embedded `\r` and `\n` characters.
+
 ---
 
 ## High-Speed HTTP Middlewares
@@ -576,6 +589,10 @@ http:
           - "X-Auth-Sub"
 ```
 
+> [!IMPORTANT]
+> **HTTP Header Injection & Response Splitting Prevention (CWE-113)**:  
+> `ForwardAuthHandler` strictly inspects `Username()` and `Subject()` claims before setting identity headers. If any ASCII control characters (`< 0x20` or `0x7f`, such as `\r`, `\n`, or `\x00`) are present, the handler terminates immediately with `401 Unauthorized` and suppresses all header injection, preventing reverse proxy cache poisoning or header manipulation in Nginx and Traefik.
+
 ---
 
 ## Security Hardening & Memory Hygiene
@@ -588,6 +605,12 @@ http:
    By default, tokens missing `exp` are rejected (`ErrMissingExp`), complying with OIDC Core 1.0 §3.1.3.7 and RFC 9068 §2.2.
 4. **Secret Length Enforcement**:  
    Secrets shorter than the hash length are rejected at initialization with `ErrInvalidConfig` (`ErrInsecureSecret`) per RFC 7518 §3.2.
+5. **Defensive Key Material Cloning**:  
+   To prevent data races and concurrent external mutations, `ecdsa.PublicKey` coordinates (`X` and `Y` `big.Int`s) and raw secret/OKP slices are deep-copied into private internal structures during compilation (`compileKeys`), ensuring verifiers are thread-safe and completely immutable.
+6. **Strict Coordinate & Curve Geometry Checks**:  
+   Elliptic curve public keys are verified against curve equations at parse and registration time (`isValidP256PublicKey`), rejecting points not on curve P-256 and the point at infinity $(0,0)$.
+7. **HTTP Header Injection & CRLF Immunity**:  
+   Reverse proxy headers generated by `ForwardAuthHandler` fail closed on any control bytes in subject or username claims.
 
 ---
 

@@ -58,8 +58,8 @@ func (v *Verifier) SignToIOVWithScratch(dst []byte, payloadJSON []byte, iov *[2]
 	case AlgEdDSA:
 		totalSigningLen := len(v.encodedHeaderDotBytes) + len(encPayload)
 		var signBuf []byte
-		if totalSigningLen <= len(st.payloadArr) {
-			signBuf = st.payloadArr[:totalSigningLen]
+		if totalSigningLen <= len(st.signArr) {
+			signBuf = st.signArr[:totalSigningLen]
 		} else {
 			signBuf = make([]byte, totalSigningLen)
 		}

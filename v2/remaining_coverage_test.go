@@ -149,15 +149,37 @@ func TestRemainingCoverage(t *testing.T) {
 	if err := v.VerifyAndIterate(tokNbfBadNum, now, nil); !errors.Is(err, ErrInvalidPayload) {
 		t.Fatalf("expected ErrInvalidPayload for invalid nbf number, got %v", err)
 	}
+	// Duplicate iss
+	tokDupIss, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":"auth.zerojwt.io","iss":"auth.zerojwt.io","aud":"api.zerojwt.io"}`, now+1000)))
+	if err := v.VerifyAndIterate(tokDupIss, now, nil); !errors.Is(err, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for duplicate iss in VerifyAndIterate, got %v", err)
+	}
+	// Duplicate aud
+	tokDupAud, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":"auth.zerojwt.io","aud":"api.zerojwt.io","aud":"api.zerojwt.io"}`, now+1000)))
+	if err := v.VerifyAndIterate(tokDupAud, now, nil); !errors.Is(err, ErrInvalidPayload) {
+		t.Fatalf("expected ErrInvalidPayload for duplicate aud in VerifyAndIterate, got %v", err)
+	}
 	// Iss as non-string
 	tokIssNum, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":12345}`, now+1000)))
 	if err := v.VerifyAndIterate(tokIssNum, now, nil); !errors.Is(err, ErrInvalidIssuer) {
 		t.Fatalf("expected ErrInvalidIssuer for numeric iss, got %v", err)
 	}
-	// Iss escaped
-	tokIssEsc, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":"auth\u002ezerojwt\u002eio","aud":"api.zerojwt.io"}`, now+1000)))
-	if err := v.VerifyAndIterate(tokIssEsc, now, nil); err != nil {
+	// Iss escaped (verify Pass 1 does not corrupt payload for Pass 2 callback)
+	tokIssEsc, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":"auth\u002ezerojwt\u002eio","aud":"api.zerojwt.io","role":"admin"}`, now+1000)))
+	var seenIss, seenRole string
+	if err := v.VerifyAndIterate(tokIssEsc, now, func(k, val []byte, isStr bool) bool {
+		switch string(k) {
+		case "iss":
+			seenIss = string(val)
+		case "role":
+			seenRole = string(val)
+		}
+		return true
+	}); err != nil {
 		t.Fatalf("expected success for escaped iss, got %v", err)
+	}
+	if seenIss != `auth\u002ezerojwt\u002eio` || seenRole != "admin" {
+		t.Fatalf("Pass 1 mutated payload buffer! seenIss=%q seenRole=%q", seenIss, seenRole)
 	}
 	// Aud mismatch
 	tokAudBad, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":"auth.zerojwt.io","aud":"wrong.aud"}`, now+1000)))
@@ -179,6 +201,24 @@ func TestRemainingCoverage(t *testing.T) {
 	tokNoAud, _ := v.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":"auth.zerojwt.io"}`, now+1000)))
 	if err := v.VerifyAndIterate(tokNoAud, now, nil); !errors.Is(err, ErrInvalidAudience) {
 		t.Fatalf("expected ErrInvalidAudience when aud missing, got %v", err)
+	}
+	// Escaped quotes inside iss and aud during VerifyAndIterate (regression test for in-place unescape corruption)
+	vEscQuote, err := New(secret, Options{
+		ExpectedIssuer:   `auth"quote`,
+		ExpectedAudience: `api"quote`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokEscQuote, _ := vEscQuote.Sign(nil, []byte(fmt.Sprintf(`{"exp":%d,"iss":"auth\"quote","aud":["other","api\"quote"],"after":"ok"}`, now+1000)))
+	var afterVal string
+	if err := vEscQuote.VerifyAndIterate(tokEscQuote, now, func(k, val []byte, isStr bool) bool {
+		if string(k) == "after" {
+			afterVal = string(val)
+		}
+		return true
+	}); err != nil || afterVal != "ok" {
+		t.Fatalf("VerifyAndIterate with escaped quotes in iss/aud failed: err=%v after=%q", err, afterVal)
 	}
 
 	// 6. Iter iterator branches

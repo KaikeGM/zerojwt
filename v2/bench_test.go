@@ -157,6 +157,36 @@ func TestZeroAllocations(t *testing.T) {
 	if splitIterAllocs != 0 {
 		t.Fatalf("expected 0 allocs in IterSplitWithScratch, got %v", splitIterAllocs)
 	}
+
+	// 8. EdDSA VerifySplit with large valid payload (~850B raw -> ~1175B encoded > 1024B) and oversized DoS payload: 0 allocs
+	edSt := vEd.NewScratch()
+	largeEdPayload := []byte(fmt.Sprintf(`{"sub":"%s","data":"%s","exp":%d}`,
+		strings.Repeat("u", 200), strings.Repeat("x", 600), now+3600))
+	largeEdTok, err := vEd.Sign(make([]byte, 0, 2048), largeEdPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edCut := len(largeEdTok) / 2
+	edHead, edTail := largeEdTok[:edCut], largeEdTok[edCut:]
+	edSplitAllocs := testing.AllocsPerRun(100, func() {
+		if err := vEd.VerifySplitWithScratch(edHead, edTail, now, &claims, edSt); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if edSplitAllocs != 0 {
+		t.Fatalf("expected 0 allocs in EdDSA VerifySplitWithScratch on 850B payload, got %v", edSplitAllocs)
+	}
+
+	// Oversized unauthenticated EdDSA split payload must be rejected before stitching with 0 allocs (GO-2025-3488 / CWE-789)
+	oversizedTail := append(bytes.Repeat([]byte("A"), 4096), []byte(".c2ln")...)
+	edDoSAllocs := testing.AllocsPerRun(100, func() {
+		if err := vEd.VerifySplitWithScratch(edHead, oversizedTail, now, &claims, edSt); err != zerojwt.ErrPayloadTooLarge {
+			t.Fatalf("expected ErrPayloadTooLarge, got %v", err)
+		}
+	})
+	if edDoSAllocs != 0 {
+		t.Fatalf("expected 0 allocs rejecting oversized EdDSA split payload, got %v", edDoSAllocs)
+	}
 }
 
 func BenchmarkVerifyHS256(b *testing.B) {

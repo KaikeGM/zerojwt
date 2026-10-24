@@ -5,7 +5,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
-	"encoding/base64"
 	"math/big"
 )
 
@@ -25,8 +24,8 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 		if !ok {
 			return nil, ErrInvalidJWKS
 		}
-		body = bytes.TrimSpace(rest)
-		if bytes.Equal(k, []byte("keys")) {
+		body = trimJSONWS(rest)
+		if string(k) == "keys" {
 			keysArr = val
 			foundKeys = true
 			break
@@ -42,6 +41,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 	}
 
 	var res []Key
+	seenKids := make(map[string]struct{})
 	for len(arrBody) > 0 {
 		elem, _, rest, ok := NextArrayElement(arrBody)
 		if !ok {
@@ -54,15 +54,28 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 		}
 
 		var (
-			kty, kid, crv, k, x, y, use []byte
+			kty, kid, crv, k, x, y, use, alg, keyOps []byte
+			hasUse, hasKeyOps                        bool
 		)
 		for len(elemObj) > 0 {
 			propKey, propVal, isStr, restProp, ok := NextJSONProp(elemObj)
 			if !ok {
 				return nil, ErrInvalidJWKS
 			}
-			elemObj = bytes.TrimSpace(restProp)
+			elemObj = trimJSONWS(restProp)
+			if string(propKey) == "key_ops" {
+				if isStr {
+					return nil, ErrInvalidJWKS
+				}
+				keyOps = propVal
+				hasKeyOps = true
+				continue
+			}
 			if !isStr {
+				switch string(propKey) {
+				case "kty", "use", "alg", "kid", "crv", "k", "x", "y":
+					return nil, ErrInvalidJWKS
+				}
 				continue
 			}
 			if bytes.IndexByte(propVal, '\\') >= 0 {
@@ -75,6 +88,12 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				kty = propVal
 			case "use":
 				use = propVal
+				hasUse = true
+			case "alg":
+				if len(propVal) == 0 {
+					return nil, ErrInvalidJWKS
+				}
+				alg = propVal
 			case "kid":
 				kid = propVal
 			case "crv":
@@ -88,13 +107,25 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 			}
 		}
 
+		if hasUse && string(use) != "sig" && string(use) != "enc" {
+			return nil, ErrInvalidJWKS
+		}
+		if hasKeyOps {
+			canVerify, ok := validateJWKSKeyOps(keyOps, use)
+			if !ok {
+				return nil, ErrInvalidJWKS
+			}
+			if !canVerify {
+				continue
+			}
+		}
 		if string(use) == "enc" {
 			continue
 		}
 
 		switch string(kty) {
 		case "oct":
-			if len(kid) == 0 || len(k) == 0 {
+			if len(kid) == 0 || len(k) == 0 || (len(alg) > 0 && string(alg) != "HS256" && string(alg) != "HS384" && string(alg) != "HS512") {
 				return nil, ErrInvalidJWKS
 			}
 			sec, err := decodeJWKSBase64(k)
@@ -106,7 +137,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				Secret: sec,
 			})
 		case "OKP":
-			if len(kid) == 0 || string(crv) != "Ed25519" || len(x) == 0 {
+			if len(kid) == 0 || string(crv) != "Ed25519" || len(x) == 0 || (len(alg) > 0 && string(alg) != "EdDSA") {
 				return nil, ErrInvalidJWKS
 			}
 			pubBytes, err := decodeJWKSBase64(x)
@@ -118,34 +149,39 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 				Ed25519Public: ed25519.PublicKey(pubBytes),
 			})
 		case "EC":
-			if len(kid) == 0 || string(crv) != "P-256" || len(x) == 0 || len(y) == 0 {
+			if len(kid) == 0 || string(crv) != "P-256" || len(x) == 0 || len(y) == 0 || (len(alg) > 0 && string(alg) != "ES256") {
 				return nil, ErrInvalidJWKS
 			}
+			// RFC 7518 §6.2.1.2 & §6.2.1.3: P-256 coordinates MUST be exactly 32 octets.
 			xBytes, err := decodeJWKSBase64(x)
-			if err != nil || len(xBytes) == 0 {
+			if err != nil || len(xBytes) != 32 {
 				return nil, ErrInvalidJWKS
 			}
 			yBytes, err := decodeJWKSBase64(y)
-			if err != nil || len(yBytes) == 0 {
+			if err != nil || len(yBytes) != 32 {
 				return nil, ErrInvalidJWKS
 			}
-			xInt := new(big.Int).SetBytes(xBytes)
-			yInt := new(big.Int).SetBytes(yBytes)
-			if !elliptic.P256().IsOnCurve(xInt, yInt) {
+			pub := &ecdsa.PublicKey{
+				Curve: elliptic.P256(),
+				X:     new(big.Int).SetBytes(xBytes),
+				Y:     new(big.Int).SetBytes(yBytes),
+			}
+			if !isValidP256PublicKey(pub) {
 				return nil, ErrInvalidJWKS
 			}
 			res = append(res, Key{
-				ID: string(kid),
-				ECDSAPublic: &ecdsa.PublicKey{
-					Curve: elliptic.P256(),
-					X:     xInt,
-					Y:     yInt,
-				},
+				ID:          string(kid),
+				ECDSAPublic: pub,
 			})
 		default:
 			// RFC 7517 §5: ignore unsupported key types (e.g. RSA) without failing the whole JWKS document.
 			continue
 		}
+
+		if _, dup := seenKids[string(kid)]; dup {
+			return nil, ErrInvalidJWKS
+		}
+		seenKids[string(kid)] = struct{}{}
 	}
 
 	if len(res) == 0 {
@@ -154,10 +190,44 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 	return res, nil
 }
 
+func validateJWKSKeyOps(keyOps, use []byte) (canVerify bool, ok bool) {
+	opsBody, ok := TrimJSONArray(keyOps)
+	if !ok || len(opsBody) == 0 {
+		return false, false
+	}
+	hasSigOp := false
+	hasEncOp := false
+	for len(opsBody) > 0 {
+		op, isStr, rest, ok := NextArrayElement(opsBody)
+		if !ok || !isStr || len(op) == 0 {
+			return false, false
+		}
+		opsBody = rest
+		switch string(op) {
+		case "verify":
+			canVerify = true
+			hasSigOp = true
+		case "sign":
+			hasSigOp = true
+		case "encrypt", "decrypt", "wrapKey", "unwrapKey", "deriveKey", "deriveBits":
+			hasEncOp = true
+		default:
+			return false, false
+		}
+	}
+	if (string(use) == "sig" && hasEncOp) || (string(use) == "enc" && hasSigOp) {
+		return false, false
+	}
+	return canVerify, true
+}
+
 func decodeJWKSBase64(b []byte) ([]byte, error) {
+	if bytes.IndexByte(b, '\n') >= 0 || bytes.IndexByte(b, '\r') >= 0 {
+		return nil, ErrInvalidJWKS
+	}
 	b = bytes.TrimRight(b, "=")
-	dst := make([]byte, base64.RawURLEncoding.DecodedLen(len(b)))
-	n, err := base64.RawURLEncoding.Decode(dst, b)
+	dst := make([]byte, rawURLStrict.DecodedLen(len(b)))
+	n, err := rawURLStrict.Decode(dst, b)
 	if err != nil {
 		return nil, err
 	}

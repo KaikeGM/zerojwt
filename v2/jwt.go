@@ -10,9 +10,11 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"hash"
 	"io"
+	"math/big"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -130,7 +132,7 @@ type Options struct {
 	AllowShortSecret bool
 }
 
-// Scratch holds reusable buffers and pre-initialized HMAC hashers.
+// Scratch holds reusable buffers and pre-initialized HMAC/SHA-256 hashers.
 type Scratch struct {
 	mac        hash.Hash
 	keyMacs    []hash.Hash
@@ -142,12 +144,11 @@ type Scratch struct {
 	payloadBuf []byte
 	hdrArr     [MaxHeaderSize]byte
 	payloadArr [MaxPayloadSize]byte
+	signArr    [1544]byte // holds Base64URL(MaxHeaderSize) + '.' + Base64URL(MaxPayloadSize) (171+1+1366 = 1538, 8B-aligned)
 }
 
 func memclr(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
+	clear(b)
 }
 
 // Clear zeroes out all internal working buffers in Scratch using runtime memclr.
@@ -157,6 +158,7 @@ func (s *Scratch) Clear() {
 	memclr(s.derBuf[:])
 	memclr(s.hdrBuf)
 	memclr(s.payloadBuf)
+	memclr(s.signArr[:])
 }
 
 // Claims holds standard JWT claims on the caller's stack without heap allocations.
@@ -396,7 +398,7 @@ func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 	}
 	ecPub := opts.ECDSAPublicKey
 	if ecPub == nil && opts.ECDSAPrivateKey != nil {
-		ecPub = &opts.ECDSAPrivateKey.PublicKey
+		ecPub = cloneECDSAPublicKey(&opts.ECDSAPrivateKey.PublicKey)
 	}
 
 	v := &Verifier{
@@ -409,7 +411,7 @@ func newVerifier(secret []byte, opts Options) (*Verifier, error) {
 		secret:                append([]byte(nil), secret...),
 		edPub:                 append(ed25519.PublicKey(nil), edPub...),
 		edPriv:                append(ed25519.PrivateKey(nil), opts.Ed25519PrivateKey...),
-		ecPub:                 ecPub,
+		ecPub:                 cloneECDSAPublicKey(ecPub),
 		ecPriv:                opts.ECDSAPrivateKey,
 		keys:                  cKeys,
 		strictSecret:          !opts.AllowShortSecret,
@@ -496,12 +498,12 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 			if priv == nil && len(opts.Keys) == 0 {
 				return invalid("missing ECDSA key")
 			}
-		} else if pub.Curve != elliptic.P256() {
-			return invalid("ES256 requires a P-256 public key")
+		} else if !isValidP256PublicKey(pub) {
+			return invalid("ES256 requires a valid P-256 public key")
 		}
 		if priv != nil {
-			if priv.Curve != elliptic.P256() {
-				return invalid("ES256 requires a P-256 private key")
+			if !isValidP256PublicKey(&priv.PublicKey) {
+				return invalid("ES256 requires a valid P-256 private key")
 			}
 			if priv.D == nil || priv.D.Sign() <= 0 || priv.D.Cmp(priv.Params().N) >= 0 {
 				return invalid("ES256 requires a valid P-256 private key scalar (1 <= D < N)")
@@ -517,6 +519,25 @@ func validateConfig(secret []byte, alg Algorithm, opts Options) error {
 	return nil
 }
 
+func isValidP256PublicKey(pub *ecdsa.PublicKey) bool {
+	return pub != nil &&
+		pub.Curve == elliptic.P256() &&
+		pub.X != nil && pub.Y != nil &&
+		pub.X.Sign() > 0 && pub.Y.Sign() > 0 &&
+		pub.Curve.IsOnCurve(pub.X, pub.Y)
+}
+
+func cloneECDSAPublicKey(pub *ecdsa.PublicKey) *ecdsa.PublicKey {
+	if pub == nil {
+		return nil
+	}
+	return &ecdsa.PublicKey{
+		Curve: pub.Curve,
+		X:     new(big.Int).Set(pub.X),
+		Y:     new(big.Int).Set(pub.Y),
+	}
+}
+
 func compileKeys(keys []Key) []compiledKey {
 	if len(keys) == 0 {
 		return nil
@@ -527,7 +548,7 @@ func compileKeys(keys []Key) []compiledKey {
 			idBytes:       []byte(k.ID),
 			secret:        append([]byte(nil), k.Secret...),
 			ed25519Public: append(ed25519.PublicKey(nil), k.Ed25519Public...),
-			ecdsaPublic:   k.ECDSAPublic,
+			ecdsaPublic:   cloneECDSAPublicKey(k.ECDSAPublic),
 		}
 	}
 	return cKeys
@@ -573,8 +594,8 @@ func validateKeysList(keys []Key, alg Algorithm, strictSecret bool) error {
 				return invalid("Keys[%d] (%q): EdDSA needs a %d-byte Ed25519Public", i, k.ID, ed25519.PublicKeySize)
 			}
 		case alg == AlgES256:
-			if k.ECDSAPublic == nil || k.ECDSAPublic.Curve != elliptic.P256() {
-				return invalid("Keys[%d] (%q): ES256 needs a P-256 ECDSAPublic", i, k.ID)
+			if !isValidP256PublicKey(k.ECDSAPublic) {
+				return invalid("Keys[%d] (%q): ES256 needs a valid P-256 ECDSAPublic", i, k.ID)
 			}
 		}
 	}
@@ -664,22 +685,21 @@ func (v *Verifier) newHasher(sec []byte) hash.Hash {
 }
 
 func (st *Scratch) getOrInitKeyMac(keyIdx int, ks *keySet, newHasher func([]byte) hash.Hash) hash.Hash {
-	if st.keyVersion != ks.keyVersion {
-		st.keyMacs = nil
-		st.keyVersion = ks.keyVersion
-	}
-	if keyIdx < len(st.keyMacs) && st.keyMacs[keyIdx] != nil {
+	if st.keyVersion == ks.keyVersion && keyIdx < len(st.keyMacs) {
 		return st.keyMacs[keyIdx]
 	}
-	if keyIdx >= len(st.keyMacs) {
-		newMacs := make([]hash.Hash, len(ks.keys))
-		copy(newMacs, st.keyMacs)
-		st.keyMacs = newMacs
+	return st.getOrInitKeyMacSlow(keyIdx, ks, newHasher)
+}
+
+//go:noinline
+func (st *Scratch) getOrInitKeyMacSlow(keyIdx int, ks *keySet, newHasher func([]byte) hash.Hash) hash.Hash {
+	st.keyVersion = ks.keyVersion
+	newMacs := make([]hash.Hash, len(ks.keys))
+	for i := range ks.keys {
+		newMacs[i] = newHasher(ks.keys[i].secret)
 	}
-	if st.keyMacs[keyIdx] == nil {
-		st.keyMacs[keyIdx] = newHasher(ks.keys[keyIdx].secret)
-	}
-	return st.keyMacs[keyIdx]
+	st.keyMacs = newMacs
+	return newMacs[keyIdx]
 }
 
 // NewScratch allocates a new Scratch state bound to this Verifier's keys and buffer sizes.
@@ -929,10 +949,14 @@ func (v *Verifier) VerifyWithScratch(tok []byte, nowUnix int64, out *Claims, st 
 // VerifyBearer strips the "Bearer " prefix (case-insensitively per RFC 7235 / RFC 6750)
 // from an HTTP Authorization header and verifies the token with zero heap allocations.
 func (v *Verifier) VerifyBearer(authHeader []byte, nowUnix int64, out *Claims) error {
-	if len(authHeader) < len(bearerPrefix) || !bytes.EqualFold(authHeader[:len(bearerPrefix)], bearerPrefix) {
+	// SWAR case-insensitive check for "Bearer " (0x72616562 = "bear", 0x7265 = "er")
+	if len(authHeader) < 7 ||
+		(binary.LittleEndian.Uint32(authHeader[:4])|0x20202020) != 0x72616562 ||
+		(binary.LittleEndian.Uint16(authHeader[4:6])|0x2020) != 0x7265 ||
+		authHeader[6] != ' ' {
 		return ErrMissingBearer
 	}
-	return v.Verify(authHeader[len(bearerPrefix):], nowUnix, out)
+	return v.Verify(authHeader[7:], nowUnix, out)
 }
 
 // VerifyLarge is a compatibility alias for Verify in v2.
@@ -973,10 +997,9 @@ func (v *Verifier) VerifyAndIterateWithScratch(tok []byte, nowUnix int64, fn fun
 	}
 
 	// Pass 2: Token is 100% valid; invoke callback
-	body, _ = TrimJSONObject(plBytes)
 	for len(body) > 0 {
 		key, val, isStr, rest, _ := NextJSONProp(body)
-		body = bytes.TrimSpace(rest)
+		body = rest
 		if fn != nil && !fn(key, val, isStr) {
 			break
 		}
@@ -996,48 +1019,58 @@ func (v *Verifier) validatePayloadClaims(body []byte, nowUnix int64) error {
 	matchedAud := len(v.expectedAud) == 0
 	sawExp := false
 	sawNbf := false
+	sawIss := false
+	sawAud := false
 
 	for len(body) > 0 {
 		key, val, isStr, rest, ok := NextJSONProp(body)
 		if !ok {
 			return ErrInvalidPayload
 		}
-		body = bytes.TrimSpace(rest)
+		body = rest
 
-		if len(key) == 3 {
-			if key[0] == 'e' && key[1] == 'x' && key[2] == 'p' {
-				if sawExp || isStr {
-					return ErrInvalidPayload
-				}
-				expSec, ok := ParseNumeric(val)
-				if !ok {
-					return ErrInvalidPayload
-				}
-				sawExp = true
-				if expCutoff >= expSec {
-					return ErrTokenExpired
-				}
-			} else if key[0] == 'n' && key[1] == 'b' && key[2] == 'f' {
-				if sawNbf || isStr {
-					return ErrInvalidPayload
-				}
-				nbfSec, ok := ParseNumeric(val)
-				if !ok {
-					return ErrInvalidPayload
-				}
-				sawNbf = true
-				if nbfCutoff < nbfSec {
-					return ErrTokenNotValidYet
-				}
-			} else if key[0] == 'i' && key[1] == 's' && key[2] == 's' && len(v.expectedIss) > 0 {
-				if bytes.IndexByte(val, '\\') >= 0 {
-					val = UnescapeJSONInPlace(val)
-				}
-				if !isStr || !bytes.Equal(val, v.expectedIss) {
+		switch string(key) {
+		case "exp":
+			if sawExp || isStr {
+				return ErrInvalidPayload
+			}
+			expSec, ok := ParseNumeric(val)
+			if !ok {
+				return ErrInvalidPayload
+			}
+			sawExp = true
+			if expCutoff >= expSec {
+				return ErrTokenExpired
+			}
+		case "nbf":
+			if sawNbf || isStr {
+				return ErrInvalidPayload
+			}
+			nbfSec, ok := ParseNumeric(val)
+			if !ok {
+				return ErrInvalidPayload
+			}
+			sawNbf = true
+			if nbfCutoff < nbfSec {
+				return ErrTokenNotValidYet
+			}
+		case "iss":
+			if sawIss {
+				return ErrInvalidPayload
+			}
+			sawIss = true
+			if len(v.expectedIss) > 0 {
+				if !isStr || !equalJSONString(val, v.expectedIss) {
 					return ErrInvalidIssuer
 				}
 				matchedIss = true
-			} else if key[0] == 'a' && key[1] == 'u' && key[2] == 'd' && len(v.expectedAud) > 0 {
+			}
+		case "aud":
+			if sawAud {
+				return ErrInvalidPayload
+			}
+			sawAud = true
+			if len(v.expectedAud) > 0 {
 				if !matchAudienceClaim(val, isStr, v.expectedAud, nil) {
 					return ErrInvalidAudience
 				}
@@ -1092,7 +1125,12 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 		return nil, err
 	}
 
-	// 2. Decode signature into scratch buffer
+	// 2. Enforce payload size bound before signature hashing (prevents CPU DoS on oversized tokens)
+	if enc.DecodedLen(len(pBytes)) > len(st.payloadBuf) {
+		return nil, ErrPayloadTooLarge
+	}
+
+	// 3. Decode signature into scratch buffer
 	if enc.DecodedLen(len(sBytes)) > len(st.sigBuf) {
 		return nil, ErrInvalidSignature
 	}
@@ -1101,7 +1139,7 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 		return nil, ErrInvalidSignature
 	}
 
-	// 3. Verify signature
+	// 4. Verify signature
 	signingInputLen := len(hBytes) + 1 + len(pBytes)
 	switch v.alg {
 	case AlgEdDSA:
@@ -1146,10 +1184,7 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 		}
 	}
 
-	// 4. Decode payload into scratch buffer
-	if enc.DecodedLen(len(pBytes)) > len(st.payloadBuf) {
-		return nil, ErrPayloadTooLarge
-	}
+	// 5. Decode payload into scratch buffer
 	nPl, err := enc.Decode(st.payloadBuf, pBytes)
 	if err != nil || nPl == 0 {
 		return nil, ErrInvalidPayload
@@ -1159,9 +1194,11 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 }
 
 func (v *Verifier) validateHeader(h []byte, optKS ...*keySet) (int, error) {
-	ks := v.getKeySet()
+	var ks *keySet
 	if len(optKS) > 0 && optKS[0] != nil {
 		ks = optKS[0]
+	} else {
+		ks = v.getKeySet()
 	}
 	body, ok := TrimJSONObject(h)
 	if !ok {
@@ -1182,7 +1219,7 @@ func (v *Verifier) validateHeader(h []byte, optKS ...*keySet) (int, error) {
 			if body[0] != ',' {
 				return -1, ErrInvalidHeader
 			}
-			afterComma := bytes.TrimSpace(body[1:])
+			afterComma := trimJSONWS(body[1:])
 			if len(afterComma) == 0 || afterComma[0] != '"' {
 				return -1, ErrInvalidHeader
 			}
@@ -1192,20 +1229,21 @@ func (v *Verifier) validateHeader(h []byte, optKS ...*keySet) (int, error) {
 		if !ok {
 			return -1, ErrInvalidHeader
 		}
-		body = bytes.TrimSpace(rest)
-		if bytes.Equal(key, algKey) {
-			if hasAlg || !isStr || !bytes.Equal(val, v.algBytes) {
+		body = trimJSONWS(rest)
+		switch string(key) {
+		case "alg":
+			if hasAlg || !isStr || string(val) != string(v.algBytes) {
 				return -1, ErrInvalidHeader
 			}
 			hasAlg = true
-		} else if bytes.Equal(key, typKey) {
-			if hasTyp || !isStr || !bytes.EqualFold(val, jwtVal) {
+		case "typ":
+			if hasTyp || !isStr || len(val) != 3 || (val[0]|0x20) != 'j' || (val[1]|0x20) != 'w' || (val[2]|0x20) != 't' {
 				return -1, ErrInvalidHeader
 			}
 			hasTyp = true
-		} else if bytes.Equal(key, critKey) {
+		case "crit":
 			return -1, ErrInvalidHeader
-		} else if bytes.Equal(key, kidKey) {
+		case "kid":
 			if hasKid || !isStr || len(val) == 0 {
 				return -1, ErrInvalidHeader
 			}
@@ -1217,7 +1255,7 @@ func (v *Verifier) validateHeader(h []byte, optKS ...*keySet) (int, error) {
 			if len(keys) > 0 {
 				found := -1
 				for i := range keys {
-					if bytes.Equal(keys[i].idBytes, val) {
+					if string(keys[i].idBytes) == string(val) {
 						found = i
 						break
 					}
@@ -1257,7 +1295,7 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 		if !ok {
 			return ErrInvalidPayload
 		}
-		body = bytes.TrimSpace(rest)
+		body = rest
 
 		switch string(key) {
 		case "exp":
@@ -1335,7 +1373,7 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 			if len(val) > len(out.issBuf) {
 				return ErrInvalidPayload
 			}
-			if len(v.expectedIss) > 0 && !bytes.Equal(val, v.expectedIss) {
+			if len(v.expectedIss) > 0 && string(val) != string(v.expectedIss) {
 				return ErrInvalidIssuer
 			}
 			copy(out.issBuf[:], val)
@@ -1392,16 +1430,29 @@ func (v *Verifier) parseStandardClaims(b []byte, now int64, out *Claims) error {
 	return nil
 }
 
+func equalJSONString(raw, expected []byte) bool {
+	if bytes.IndexByte(raw, '\\') < 0 {
+		return string(raw) == string(expected)
+	}
+	return equalJSONStringEscaped(raw, expected)
+}
+
+func equalJSONStringEscaped(raw, expected []byte) bool {
+	var buf [MaxPayloadSize]byte
+	n := copy(buf[:], raw)
+	return string(UnescapeJSONInPlace(buf[:n])) == string(expected)
+}
+
 func matchAudienceClaim(val []byte, isStr bool, expectedAud []byte, capturedOut *[]byte) bool {
 	if isStr {
-		if bytes.IndexByte(val, '\\') >= 0 {
-			val = UnescapeJSONInPlace(val)
+		if len(expectedAud) > 0 && !equalJSONString(val, expectedAud) {
+			return false
 		}
 		if capturedOut != nil {
+			if bytes.IndexByte(val, '\\') >= 0 {
+				val = UnescapeJSONInPlace(val)
+			}
 			*capturedOut = val
-		}
-		if len(expectedAud) > 0 && !bytes.Equal(val, expectedAud) {
-			return false
 		}
 		return true
 	}
@@ -1417,33 +1468,33 @@ func matchAudienceClaim(val []byte, isStr bool, expectedAud []byte, capturedOut 
 			return false
 		}
 		arrBody = rest
-		if bytes.IndexByte(elem, '\\') >= 0 {
-			elem = UnescapeJSONInPlace(elem)
-		}
-		if first {
-			if capturedOut != nil {
-				*capturedOut = elem
-			}
-			first = false
-		}
-		if len(expectedAud) > 0 && bytes.Equal(elem, expectedAud) {
+		elemMatched := len(expectedAud) > 0 && equalJSONString(elem, expectedAud)
+		if elemMatched {
 			matched = true
-			if capturedOut != nil {
-				*capturedOut = elem
-			}
 		}
+		if capturedOut != nil && (first || elemMatched) {
+			if bytes.IndexByte(elem, '\\') >= 0 {
+				elem = UnescapeJSONInPlace(elem)
+			}
+			*capturedOut = elem
+		}
+		first = false
 	}
 	return matched
 }
 
 func encodeP1363ToDER(dst *[72]byte, r, s []byte) ([]byte, bool) {
+	return encodeP1363ToDERInto(dst[:], r, s, 32)
+}
+
+func encodeP1363ToDERInto(dst, r, s []byte, coordLen int) ([]byte, bool) {
 	for len(r) > 0 && r[0] == 0 {
 		r = r[1:]
 	}
 	for len(s) > 0 && s[0] == 0 {
 		s = s[1:]
 	}
-	if len(r) == 0 || len(s) == 0 {
+	if len(r) == 0 || len(r) > coordLen || len(s) == 0 || len(s) > coordLen {
 		return nil, false
 	}
 	rPad := 0
@@ -1480,7 +1531,8 @@ func encodeP1363ToDER(dst *[72]byte, r, s []byte) ([]byte, bool) {
 }
 
 func decodeDERToP1363(der, dst []byte) bool {
-	if len(der) < 8 || der[0] != 0x30 {
+	coordLen := len(dst) / 2
+	if coordLen == 0 || len(dst)%2 != 0 || len(der) < 8 || der[0] != 0x30 {
 		return false
 	}
 	idx := 2
@@ -1513,11 +1565,11 @@ func decodeDERToP1363(der, dst []byte) bool {
 	for len(sBytes) > 0 && sBytes[0] == 0 {
 		sBytes = sBytes[1:]
 	}
-	if len(rBytes) > 32 || len(sBytes) > 32 {
+	if len(rBytes) == 0 || len(rBytes) > coordLen || len(sBytes) == 0 || len(sBytes) > coordLen {
 		return false
 	}
-	memclr(dst[:64])
-	copy(dst[32-len(rBytes):32], rBytes)
-	copy(dst[64-len(sBytes):64], sBytes)
+	memclr(dst)
+	copy(dst[coordLen-len(rBytes):coordLen], rBytes)
+	copy(dst[2*coordLen-len(sBytes):2*coordLen], sBytes)
 	return true
 }

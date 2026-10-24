@@ -13,6 +13,8 @@ type PaddedScratch struct {
 // with dedicated worker affinity, eliminating sync.Pool contention and CPU cache invalidations.
 type WorkerScratchGroup struct {
 	workers []PaddedScratch
+	mask    uint
+	count   int
 }
 
 // NewWorkerScratchGroup instantiates a WorkerScratchGroup sized for numWorkers.
@@ -20,8 +22,14 @@ func NewWorkerScratchGroup(v *Verifier, numWorkers int) *WorkerScratchGroup {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
+	size := 1
+	for size < numWorkers {
+		size <<= 1
+	}
 	g := &WorkerScratchGroup{
-		workers: make([]PaddedScratch, numWorkers),
+		workers: make([]PaddedScratch, size),
+		mask:    uint(size - 1),
+		count:   numWorkers,
 	}
 	for i := range g.workers {
 		st := v.NewScratch()
@@ -30,13 +38,13 @@ func NewWorkerScratchGroup(v *Verifier, numWorkers int) *WorkerScratchGroup {
 	return g
 }
 
-// For returns the dedicated *Scratch for workerID in O(1) without atomic CAS or locks.
+// For returns the dedicated *Scratch for workerID in O(1) using power-of-2 bitmasking
+// without hardware integer division (DIVQ), atomic CAS, or locks.
 func (g *WorkerScratchGroup) For(workerID int) *Scratch {
-	idx := uint(workerID) % uint(len(g.workers))
-	return &g.workers[idx].Scratch
+	return &g.workers[uint(workerID)&g.mask].Scratch
 }
 
-// Len returns the number of worker scratch slots in the group.
+// Len returns the number of worker scratch slots requested in the group.
 func (g *WorkerScratchGroup) Len() int {
-	return len(g.workers)
+	return g.count
 }

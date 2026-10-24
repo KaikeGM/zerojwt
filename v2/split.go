@@ -126,10 +126,9 @@ func (v *Verifier) VerifySplitAndIterateWithScratch(head, tail []byte, now int64
 	}
 
 	// Pass 2: Token is 100% valid; invoke callback
-	body, _ = TrimJSONObject(payload)
 	for len(body) > 0 {
 		key, val, isStr, rest, _ := NextJSONProp(body)
-		body = bytes.TrimSpace(rest)
+		body = rest
 		if fn != nil && !fn(key, val, isStr) {
 			break
 		}
@@ -235,7 +234,12 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 		return nil, err
 	}
 
-	// 2. Decode signature
+	// 2. Enforce payload size bound before signature hashing/stitching (prevents CPU and heap allocation DoS)
+	if enc.DecodedLen(pLen) > len(st.payloadBuf) {
+		return nil, ErrPayloadTooLarge
+	}
+
+	// 3. Decode signature
 	if enc.DecodedLen(sLen) > len(st.sigBuf) {
 		return nil, ErrInvalidSignature
 	}
@@ -244,7 +248,7 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 		return nil, ErrInvalidSignature
 	}
 
-	// 3. Verify signature
+	// 4. Verify signature
 	switch v.alg {
 	case AlgEdDSA:
 		pub := v.edPub
@@ -254,16 +258,7 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 		if len(pub) != 32 {
 			return nil, ErrInvalidSignature
 		}
-		// Stitch signing input into payloadArr scratch if needed
-		totalLen := len(signingPart1) + len(signingPart2)
-		var signInput []byte
-		if totalLen <= len(st.payloadArr) {
-			signInput = st.payloadArr[:totalLen]
-		} else {
-			signInput = make([]byte, totalLen)
-		}
-		copy(signInput, signingPart1)
-		copy(signInput[len(signingPart1):], signingPart2)
+		signInput := stitchSigningInput(st, signingPart1, signingPart2)
 		if !ed25519.Verify(pub, signInput, st.sigBuf[:64]) {
 			return nil, ErrInvalidSignature
 		}
@@ -279,13 +274,9 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 		if !ok {
 			return nil, ErrInvalidSignature
 		}
-		h := sha256.New()
-		h.Write(signingPart1)
-		if len(signingPart2) > 0 {
-			h.Write(signingPart2)
-		}
-		digest := h.Sum(st.sumBuf[:0])
-		if !ecdsa.VerifyASN1(pub, digest, derSig) {
+		signInput := stitchSigningInput(st, signingPart1, signingPart2)
+		digest := sha256.Sum256(signInput)
+		if !ecdsa.VerifyASN1(pub, digest[:], derSig) {
 			return nil, ErrInvalidSignature
 		}
 	default:
@@ -309,14 +300,27 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 		}
 	}
 
-	// 4. Decode payload
-	if enc.DecodedLen(pLen) > len(st.payloadBuf) {
-		return nil, ErrPayloadTooLarge
-	}
+	// 5. Decode payload
 	nPl, err := decodeBase64Split(st.payloadBuf, p1, p2)
 	if err != nil || nPl == 0 {
 		return nil, ErrInvalidPayload
 	}
 
 	return st.payloadBuf[:nPl], nil
+}
+
+func stitchSigningInput(st *Scratch, part1, part2 []byte) []byte {
+	if len(part2) == 0 {
+		return part1
+	}
+	totalLen := len(part1) + len(part2)
+	var signInput []byte
+	if totalLen <= len(st.signArr) {
+		signInput = st.signArr[:totalLen]
+	} else {
+		signInput = make([]byte, totalLen)
+	}
+	copy(signInput, part1)
+	copy(signInput[len(part1):], part2)
+	return signInput
 }
