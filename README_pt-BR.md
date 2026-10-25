@@ -13,9 +13,9 @@
 Nascido a partir do **PR #48 (`go-gnet-kaikegm`)** no desafio *The $12 Server Challenge* — onde uma única thread do sistema operacional sustentou **300.000 conexões simultâneas keep-alive** e **35.577 req/s** —, o `zerojwt` elimina o uso de reflexão (`reflect`), alocações dinâmicas de mapas via `encoding/json` e a pressão sobre o Garbage Collector (GC) típica de bibliotecas convencionais de JWT em Go, mantendo um conjunto completo de recursos de padrão industrial.
 
 > [!IMPORTANT]
-> **🚀 `zerojwt v2.3.0` já está disponível!**
+> **🚀 `zerojwt v2.3.1` já está disponível!**
 > Suporte completo para **`RS256` (RSA 2048–4096 bits)**, **`ES384` (P-384)**, **`ES512` (P-521)**, **parser nativo de JWKS RFC 7517/7518** para RSA e EC, claims OIDC unificadas de 1016 bytes, helper ergonômico `v.VerifyNow`, ForwardAuth pronto para Nginx/Traefik, rotação de chaves lock-free e primitivas de rede para buffers circulares (`VerifySplit`, `WorkerScratchGroup`, `SignToIOV`).
-> 👉 **[Acessar a Documentação e Início Rápido da v2](v2/README_pt-BR.md)** | **[Notas de Lançamento](CHANGELOG.md#v230---2026-10-24)**
+> 👉 **[Acessar a Documentação e Início Rápido da v2](v2/README_pt-BR.md)** | **[Notas de Lançamento](CHANGELOG.md#v231---2026-10-24)**
 
 ---
 

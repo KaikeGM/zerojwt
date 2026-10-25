@@ -5,6 +5,24 @@ All notable changes to `zerojwt` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.3.1] - 2026-10-24
+
+### Added
+- **Ergonomic Timestamp-Free Verification Helpers (`v2/jwt.go`, `v2/split.go`):**
+  - Added `v.VerifyNow(token, &claims)`: verifies tokens against current system time (`time.Now().Unix()`) with automatic workspace pooling.
+  - Added `v.VerifyBearerNow(authHeader, &claims)`: strips and validates `Authorization: Bearer <token>` in a single step using current system time.
+  - Added `v.VerifySplitNow(head, tail, &claims)`: verifies tokens fragmented across circular ring buffers using current system time.
+- **Documentation & Package-Level Visibility:**
+  - Mirrored `CHANGELOG.md` into `v2/CHANGELOG.md` for direct visibility on `pkg.go.dev/github.com/KaikeGM/zerojwt/v2` and GitHub directory view.
+  - Added explicit callouts in Quick Start guides clarifying that `v.Verify` / `v.Sign` automatically manage workspaces via an internal, lock-free `sync.Pool` with guaranteed `0 B/op` and `0 allocs/op`.
+  - Added prominent `v2.3.1` announcement banners in root `README.md` and `README_pt-BR.md`.
+
+### Fixed
+- **Cross-Version Go Compatibility in RSA Tests (`v2/v230_test.go`):**
+  - Fixed `TestV230_ConfigValidation` on Go 1.24 and Go 1.25 by setting `corruptPriv.Primes = nil` instead of modifying `D`, ensuring `priv.Validate()` returns `crypto/rsa: missing primes` across all Go versions (Go 1.23 to Go 1.27+).
+
+---
+
 ## [v2.3.0] - 2026-10-24
 
 ### Added
