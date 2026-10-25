@@ -179,6 +179,11 @@ Requer **Go 1.23.0** ou superior.
 
 ### Assinatura e Verificação Básica (HS256)
 
+> [!TIP]
+> **Configuração Zero & Pool Automático de Workspaces:**
+> Os métodos padrão (`v.Verify`, `v.VerifyNow`, `v.VerifyBearerNow`, `v.Sign`, `v.SignClaims`) gerenciam automaticamente os workspaces pré-alocados através de um `sync.Pool` lock-free embutido, com garantia de **`0 B/op` e `0 allocs/op`**.
+> Você **não precisa** instanciar `Scratch` nem gerenciar pools manualmente. Primitivas avançadas como `Scratch` e `WorkerScratchGroup` são otimizações estritamente opcionais para arquiteturas orientadas a eventos de baixíssima latência (`gnet`, `evio`, `epoll`).
+
 ```go
 package main
 
@@ -212,8 +217,9 @@ func main() {
 	}
 
 	// 2. Verificar na struct Claims pré-alocada na pilha (0 alocações na heap)
+	// Você pode usar v.Verify(token, now, &claims) ou o prático v.VerifyNow(token, &claims):
 	var claims zerojwt.Claims
-	if err := v.Verify(token, now, &claims); err != nil {
+	if err := v.VerifyNow(token, &claims); err != nil {
 		panic(err)
 	}
 

@@ -1203,6 +1203,17 @@ func (v *Verifier) VerifyBearer(authHeader []byte, nowUnix int64, out *Claims) e
 	return v.Verify(authHeader[7:], nowUnix, out)
 }
 
+// VerifyNow verifies the token using the current system Unix timestamp (time.Now().Unix()).
+// Like Verify, it automatically manages internal workspaces via sync.Pool with 0 B/op and 0 allocs/op.
+func (v *Verifier) VerifyNow(tok []byte, out *Claims) error {
+	return v.Verify(tok, time.Now().Unix(), out)
+}
+
+// VerifyBearerNow parses and verifies an "Authorization: Bearer <token>" header using the current system Unix timestamp.
+func (v *Verifier) VerifyBearerNow(authHeader []byte, out *Claims) error {
+	return v.VerifyBearer(authHeader, time.Now().Unix(), out)
+}
+
 // VerifyLarge is a compatibility alias for Verify in v2.
 func (v *Verifier) VerifyLarge(tok []byte, nowUnix int64, out *Claims) error {
 	return v.Verify(tok, nowUnix, out)

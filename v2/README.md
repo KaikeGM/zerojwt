@@ -179,6 +179,11 @@ Requires **Go 1.23.0** or newer.
 
 ### Basic Signing and Verification (HS256)
 
+> [!TIP]
+> **Zero Configuration & Automatic Workspace Pooling:**
+> Standard methods (`v.Verify`, `v.VerifyNow`, `v.VerifyBearerNow`, `v.Sign`, `v.SignClaims`) automatically manage pre-allocated workspaces via an internal, lock-free `sync.Pool` with guaranteed **`0 B/op` and `0 allocs/op`**.
+> You **do not** need to touch `Scratch` or manage buffers manually. Low-level primitives like `Scratch` and `WorkerScratchGroup` are strictly optional optimizations for event-driven network engines (`gnet`, `evio`, `epoll`).
+
 ```go
 package main
 
@@ -212,8 +217,9 @@ func main() {
 	}
 
 	// 2. Verify into pre-allocated Claims struct on stack (0 heap allocations)
+	// You can use v.Verify(token, now, &claims) or the ergonomic v.VerifyNow(token, &claims):
 	var claims zerojwt.Claims
-	if err := v.Verify(token, now, &claims); err != nil {
+	if err := v.VerifyNow(token, &claims); err != nil {
 		panic(err)
 	}
 

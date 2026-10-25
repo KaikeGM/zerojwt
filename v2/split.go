@@ -9,6 +9,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
+	"time"
 )
 
 // decodeBase64Split decodes a Base64URL string split across b1 and b2 directly into dst
@@ -76,6 +77,11 @@ func (v *Verifier) VerifySplit(head, tail []byte, now int64, claims *Claims) err
 	err := v.VerifySplitWithScratch(head, tail, now, claims, st)
 	v.releaseScratch(st)
 	return err
+}
+
+// VerifySplitNow verifies a fragmented token across two non-contiguous byte slices using the current system Unix timestamp.
+func (v *Verifier) VerifySplitNow(head, tail []byte, claims *Claims) error {
+	return v.VerifySplit(head, tail, time.Now().Unix(), claims)
 }
 
 // VerifySplitWithScratch is identical to VerifySplit but uses a caller-supplied Scratch state.

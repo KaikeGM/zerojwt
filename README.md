@@ -12,8 +12,10 @@
 
 Born out of **PR #48 (`go-gnet-kaikegm`)** in *The $12 Server Challenge* — where a single OS thread sustained **300,000 concurrent keep-alive connections** and **35,577 req/s** — `zerojwt` eliminates the reflection, `encoding/json` dynamic map allocations, and Garbage Collector (GC) pressure of traditional Go JWT packages while delivering complete, industrial-grade capabilities.
 
-> [!TIP]
-> **Looking for `zerojwt v2`?** Check out [`github.com/KaikeGM/zerojwt/v2`](https://pkg.go.dev/github.com/KaikeGM/zerojwt/v2) featuring unified 1016-byte OIDC claims, lock-free key rotation, native RFC 7517 JWKS parser, turnkey ForwardAuth (Nginx/Traefik), atomic claim iteration (`iter.Seq2`), and event-driven network primitives (`VerifySplit`, `WorkerScratchGroup`, `SignToIOV`). See also the runnable [`examples/gnet`](https://github.com/KaikeGM/zerojwt/tree/main/examples/gnet) gateway!
+> [!IMPORTANT]
+> **🚀 `zerojwt v2.3.0` is now available!**
+> Full support for **`RS256` (RSA 2048–4096 bits)**, **`ES384` (P-384)**, **`ES512` (P-521)**, **native RFC 7517/7518 JWKS parser** for RSA and EC, unified 1016-byte OIDC claims, ergonomic `v.VerifyNow`, turnkey ForwardAuth, lock-free key rotation, and event-driven network primitives (`VerifySplit`, `WorkerScratchGroup`, `SignToIOV`).
+> 👉 **[Go to zerojwt v2 Documentation & Quickstart](v2/README.md)** | **[Release Notes](CHANGELOG.md#v230---2026-10-24)**
 
 ---
 
