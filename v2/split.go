@@ -231,7 +231,7 @@ func (v *Verifier) verifySplitSignatureAndDecodePayload(head, tail []byte, st *S
 
 	// 1. Decode header
 	if enc.DecodedLen(hLen) > len(st.hdrBuf) {
-		return nil, ErrInvalidHeader
+		return nil, ErrHeaderTooLarge
 	}
 	nHdr, err := decodeBase64Split(st.hdrBuf, h1, h2)
 	if err != nil || nHdr == 0 {

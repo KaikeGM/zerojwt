@@ -308,8 +308,8 @@ func TestInternalSignatureAndScratchEdges(t *testing.T) {
 	// 3. Oversized header in verifySignatureAndDecodePayload
 	tinyHdrV, _ := New(secret, Options{MaxHeaderSize: 10})
 	tinyHdrSt := tinyHdrV.NewScratch()
-	if _, err := tinyHdrV.verifySignatureAndDecodePayload(tokNorm, tinyHdrSt); !errors.Is(err, ErrInvalidHeader) {
-		t.Fatalf("expected ErrInvalidHeader for oversized header, got %v", err)
+	if _, err := tinyHdrV.verifySignatureAndDecodePayload(tokNorm, tinyHdrSt); !errors.Is(err, ErrHeaderTooLarge) {
+		t.Fatalf("expected ErrHeaderTooLarge for oversized header, got %v", err)
 	}
 
 	// 4. Invalid base64 in signature

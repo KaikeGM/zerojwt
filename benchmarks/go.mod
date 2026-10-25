@@ -4,8 +4,11 @@ go 1.27
 
 replace github.com/KaikeGM/zerojwt => ../
 
+replace github.com/KaikeGM/zerojwt/v2 => ../v2
+
 require (
 	github.com/KaikeGM/zerojwt v0.0.0
+	github.com/KaikeGM/zerojwt/v2 v2.0.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/kataras/jwt v0.3.0
 	github.com/lestrrat-go/jwx/v2 v2.1.7

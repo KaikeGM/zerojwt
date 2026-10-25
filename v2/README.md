@@ -125,6 +125,14 @@ Measured on Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 | `BenchmarkSignHS256_Standard` | Standard single-buffer sign | **349.5 ns/op** | **0 B/op** | **0 allocs/op** |
 | `BenchmarkSignHS256_SignToIOV` | Vectorized scatter/gather sign for `unix.Writev` / `Conn.Writev` | **355.8 ns/op** | **0 B/op** | **0 allocs/op** |
 
+### Reproducing Benchmarks Locally
+
+Anyone can reproduce the benchmark suite directly against `golang-jwt/jwt/v5`, `lestrrat-go/jwx/v2`, and `kataras/jwt` in seconds:
+
+```bash
+cd benchmarks && go test -bench=. -benchmem
+```
+
 ---
 
 ## Architecture & Memory Model
@@ -162,6 +170,19 @@ Measured on Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 |                                                                                                    |
 +----------------------------------------------------------------------------------------------------+
 ```
+
+### Explicit Memory Bounds & Guarantees
+
+- **Split Verification Ceiling (`VerifySplit`):**
+  - `st.signArr` has a fixed size of `[1544]byte`. For default `MaxHeaderSize: 128` (171 bytes Base64URL) and `MaxPayloadSize: 1024` (1366 bytes Base64URL), the maximum combined signing input is 1538 bytes, guaranteeing **`0 allocs/op`** during fragmented `VerifySplit`.
+  - The zero-allocation guarantee assumes the default `MaxHeaderSize: 128`. Increasing either `MaxHeaderSize` or `MaxPayloadSize` may cause asymmetric algorithms (`EdDSA`, `ECDSA`, `RSA`) to dynamically allocate during `stitchSigningInput` if the combined signing input exceeds `MaxZeroAllocSplitSigningInput` (1544 bytes, or `MaxZeroAllocSplitPayloadSize: 1024`).
+  - For symmetric HMAC algorithms (`HS256`, `HS384`, `HS512`), `VerifySplit` streams fragments directly into the hasher (`mac.Write(part1)` followed by `mac.Write(part2)`), **never allocating regardless of header or payload size**.
+- **Lock-Free Key Rotation Warmup & ZeroMemory Finalizers:**
+  - When calling `UpdateKeys` or `UpdateKeysFromJWKS`, new HMAC hashers are initialized lazily on the first verification for each worker/scratch workspace (`getOrInitKeyMacSlow`). All subsequent steady-state requests remain 100% `0 B/op, 0 allocs/op`.
+  - When `ZeroMemory: true` is enabled, replaced `keySet` generations are zeroed out via `runtime.SetFinalizer`. This means memory wiping occurs on the subsequent GC cycle after the last concurrent in-flight verification finishes (rather than synchronously blocking inside `UpdateKeys`), completely eliminating data races while guaranteeing cryptographic erasure. Note that finalizers require two GC cycles to fully reclaim underlying memory and run on Go's dedicated runtime finalizer queue.
+- **Zero-Allocation String Helpers (`VerifyString`, `VerifyBearerString`):**
+  - Web frameworks and standard `net/http` handlers often parse tokens from string headers (`r.Header.Get`), cookies, or URL parameters.
+  - Calling `VerifyStringNow(tok, &claims)` or `VerifyBearerStringNow(authHeader, &claims)` performs an immutable zero-allocation byte conversion under Go 1.20+, avoiding the 1 heap allocation of `[]byte(str)`.
 
 ---
 

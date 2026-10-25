@@ -17,10 +17,12 @@ import (
 	"hash"
 	"io"
 	"math/big"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 // Algorithm identifies a supported JWS cryptographic algorithm.
@@ -55,6 +57,17 @@ const (
 	MaxHeaderSize = 128
 	// MaxPayloadSize defines the default maximum decoded byte length of a JWT payload.
 	MaxPayloadSize = 1024
+
+	// MaxZeroAllocSplitSigningInput defines the maximum byte length of stitched signing input
+	// (Base64URL(Header) + '.' + Base64URL(Payload)) accommodated by Scratch.signArr (1544 bytes)
+	// for zero-allocation split verification of asymmetric algorithms (EdDSA, ECDSA, RSA).
+	// Default MaxHeaderSize (128) and MaxPayloadSize (1024) require at most 1538 bytes, guaranteeing
+	// 0 allocs/op. For HMAC algorithms, split verification streams bytes into the hasher and is always 0 allocs/op.
+	MaxZeroAllocSplitSigningInput = 1544
+
+	// MaxZeroAllocSplitPayloadSize defines the default maximum decoded payload byte size (1024)
+	// that guarantees 0 allocs/op during asymmetric VerifySplit.
+	MaxZeroAllocSplitPayloadSize = MaxPayloadSize
 
 	// Maximum standard claim field buffer lengths
 	MaxSubjectSize  = 256 // OIDC Core 1.0 §2 requires sub <= 255 ASCII characters
@@ -829,6 +842,13 @@ func (v *Verifier) UpdateKeys(keys []Key) error {
 		keys:       cKeys,
 		keyVersion: newVer,
 	}
+	if v.zeroMemory {
+		runtime.SetFinalizer(newKS, func(ks *keySet) {
+			for i := range ks.keys {
+				memclr(ks.keys[i].secret)
+			}
+		})
+	}
 	v.keySetPtr.Store(newKS)
 	return nil
 }
@@ -1214,6 +1234,60 @@ func (v *Verifier) VerifyBearerNow(authHeader []byte, out *Claims) error {
 	return v.VerifyBearer(authHeader, time.Now().Unix(), out)
 }
 
+// VerifyBearerWithScratch parses and verifies an "Authorization: Bearer <token>" header using a caller-supplied Scratch state.
+func (v *Verifier) VerifyBearerWithScratch(authHeader []byte, nowUnix int64, out *Claims, st *Scratch) error {
+	// SWAR case-insensitive check for "Bearer " (0x72616562 = "bear", 0x7265 = "er")
+	if len(authHeader) < 7 ||
+		(binary.LittleEndian.Uint32(authHeader[:4])|0x20202020) != 0x72616562 ||
+		(binary.LittleEndian.Uint16(authHeader[4:6])|0x2020) != 0x7265 ||
+		authHeader[6] != ' ' {
+		return ErrMissingBearer
+	}
+	return v.VerifyWithScratch(authHeader[7:], nowUnix, out, st)
+}
+
+// stringToBytesRO converts an immutable string to a byte slice with zero heap allocation.
+// This is memory-safe in Go 1.20+ because:
+// 1. The input string is read-only and immutable.
+// 2. The zerojwt verifier methods only read from the slice; they never mutate or retain it.
+func stringToBytesRO(s string) []byte {
+	if len(s) == 0 {
+		return nil
+	}
+	return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
+// VerifyString verifies a JWT token passed as a string with 0 B/op and 0 allocs/op.
+// It is 100% thread-safe and safe under Go 1.20+ as the string is treated as strictly read-only.
+func (v *Verifier) VerifyString(tok string, nowUnix int64, out *Claims) error {
+	return v.Verify(stringToBytesRO(tok), nowUnix, out)
+}
+
+// VerifyStringNow verifies a JWT token passed as a string using the current system Unix timestamp.
+func (v *Verifier) VerifyStringNow(tok string, out *Claims) error {
+	return v.Verify(stringToBytesRO(tok), time.Now().Unix(), out)
+}
+
+// VerifyStringWithScratch verifies a JWT token passed as a string using a caller-provided Scratch state.
+func (v *Verifier) VerifyStringWithScratch(tok string, nowUnix int64, out *Claims, st *Scratch) error {
+	return v.VerifyWithScratch(stringToBytesRO(tok), nowUnix, out, st)
+}
+
+// VerifyBearerString parses and verifies an "Authorization: Bearer <token>" string header.
+func (v *Verifier) VerifyBearerString(authHeader string, nowUnix int64, out *Claims) error {
+	return v.VerifyBearer(stringToBytesRO(authHeader), nowUnix, out)
+}
+
+// VerifyBearerStringNow parses and verifies an "Authorization: Bearer <token>" string header using the current timestamp.
+func (v *Verifier) VerifyBearerStringNow(authHeader string, out *Claims) error {
+	return v.VerifyBearer(stringToBytesRO(authHeader), time.Now().Unix(), out)
+}
+
+// VerifyBearerStringWithScratch parses and verifies an "Authorization: Bearer <token>" string header using a caller-supplied Scratch state.
+func (v *Verifier) VerifyBearerStringWithScratch(authHeader string, nowUnix int64, out *Claims, st *Scratch) error {
+	return v.VerifyBearerWithScratch(stringToBytesRO(authHeader), nowUnix, out, st)
+}
+
 // VerifyLarge is a compatibility alias for Verify in v2.
 func (v *Verifier) VerifyLarge(tok []byte, nowUnix int64, out *Claims) error {
 	return v.Verify(tok, nowUnix, out)
@@ -1368,7 +1442,7 @@ func (v *Verifier) verifySignatureAndDecodePayload(tok []byte, st *Scratch) ([]b
 
 	// 1. Decode header into scratch buffer
 	if enc.DecodedLen(len(hBytes)) > len(st.hdrBuf) {
-		return nil, ErrInvalidHeader
+		return nil, ErrHeaderTooLarge
 	}
 	nHdr, err := enc.Decode(st.hdrBuf, hBytes)
 	if err != nil || nHdr == 0 {

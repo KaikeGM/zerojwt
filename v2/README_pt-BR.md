@@ -125,6 +125,14 @@ Medido em Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 | `BenchmarkSignHS256_Standard` | Emissão de token em buffer único | **349.5 ns/op** | **0 B/op** | **0 allocs/op** |
 | `BenchmarkSignHS256_SignToIOV` | Emissão vetorial scatter/gather para `unix.Writev` / `Conn.Writev` | **355.8 ns/op** | **0 B/op** | **0 allocs/op** |
 
+### Reprodução Local de Benchmarks
+
+Qualquer desenvolvedor pode reproduzir a suíte comparativa contra `golang-jwt/jwt/v5`, `lestrrat-go/jwx/v2` e `kataras/jwt` em segundos:
+
+```bash
+cd benchmarks && go test -bench=. -benchmem
+```
+
 ---
 
 ## Arquitetura e Modelo de Memória
@@ -162,6 +170,19 @@ Medido em Linux amd64 (11th Gen Intel Core i5-1135G7 @ 2.40GHz, Go 1.24):
 |                                                                                                    |
 +----------------------------------------------------------------------------------------------------+
 ```
+
+### Limites Explícitos de Memória e Garantias
+
+- **Teto da Verificação Fracionada (`VerifySplit`):**
+  - O buffer `st.signArr` possui tamanho fixo de `[1544]byte`. Com os limites padrão `MaxHeaderSize: 128` (171 bytes em Base64URL) e `MaxPayloadSize: 1024` (1366 bytes em Base64URL), a assinatura máxima montada ocupa 1538 bytes, garantindo **`0 allocs/op`** durante a validação fracionada via `VerifySplit`.
+  - A garantia de zero alocações assume o padrão `MaxHeaderSize: 128`. Aumentar `MaxHeaderSize` ou `MaxPayloadSize` pode fazer com que algoritmos assimétricos (`EdDSA`, `ECDSA`, `RSA`) aloquem dinamicamente durante o `stitchSigningInput` se a soma do signing input exceder `MaxZeroAllocSplitSigningInput` (1544 bytes, ou `MaxZeroAllocSplitPayloadSize: 1024`).
+  - Para algoritmos simétricos HMAC (`HS256`, `HS384`, `HS512`), o `VerifySplit` envia os fragmentos diretamente para o hasher (`mac.Write(part1)` seguido de `mac.Write(part2)`), **nunca alocando independentemente do tamanho do cabeçalho ou do payload**.
+- **Aquecimento de Rotação Sem Travas e Finalizadores ZeroMemory:**
+  - Ao chamar `UpdateKeys` ou `UpdateKeysFromJWKS`, novos hashers HMAC são inicializados de forma tardia (*lazy*) na primeira verificação de cada worker/scratch (`getOrInitKeyMacSlow`). Todas as requisições subsequentes em estado estacionário mantêm-se 100% `0 B/op, 0 allocs/op`.
+  - Quando a opção `ZeroMemory: true` está ativada, os `keySets` substituídos são zerados via `runtime.SetFinalizer`. Isso significa que a zeragem da memória ocorre no ciclo subsequente do GC após a última referência *in-flight* concorrente ser liberada (e não travando a chamada síncrona a `UpdateKeys`), eliminando *data races* sem bloquear o tráfego. Vale destacar que objetos com finalizadores necessitam de duas passadas do GC para desalocação completa e rodam na fila de finalizadores dedicada do runtime do Go.
+- **Helpers de Strings Sem Alocação (`VerifyString`, `VerifyBearerString`):**
+  - Frameworks web e manipuladores padrão `net/http` geralmente recebem tokens como `string` em Go (`r.Header.Get`, cookies, parâmetros de URL).
+  - Chamar `VerifyStringNow(tok, &claims)` ou `VerifyBearerStringNow(authHeader, &claims)` realiza uma conversão somente-leitura e imutável para bytes no Go 1.20+, evitando a alocação de heap gerada por `[]byte(str)`.
 
 ---
 

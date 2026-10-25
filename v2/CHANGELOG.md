@@ -5,6 +5,30 @@ All notable changes to `zerojwt` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.3.2] - 2026-10-25
+
+### Added
+- **Ergonomic Zero-Allocation String Verification (`v2/jwt.go`):**
+  - Added `VerifyString(tok string, now int64, out *Claims)` and `VerifyStringNow(tok string, out *Claims)`.
+  - Added `VerifyStringWithScratch(tok string, now int64, out *Claims, st *Scratch)`.
+  - Added `VerifyBearerString(authHeader string, now int64, out *Claims)` and `VerifyBearerStringNow(authHeader string, out *Claims)`.
+  - Added `VerifyBearerStringWithScratch(authHeader string, now int64, out *Claims, st *Scratch)` and `VerifyBearerWithScratch(authHeader []byte, now int64, out *Claims, st *Scratch)`.
+  - Enables web frameworks (`net/http`, Gin, Echo, Fiber, Chi) to authenticate tokens directly from string headers/cookies with `0 B/op, 0 allocs/op` without paying for `[]byte(str)` heap allocations.
+- **Exported Split Verification Memory Bounds (`v2/jwt.go`):**
+  - Exported `MaxZeroAllocSplitSigningInput = 1544` and `MaxZeroAllocSplitPayloadSize = 1024`, documenting the exact buffer boundaries for zero-allocation fragmented token validation.
+- **Dedicated Release Test Suite (`v2/v232_test.go`):**
+  - Added dedicated test suite `v2/v232_test.go` for all v2.3.2 additions (`VerifyString*`, `ErrHeaderTooLarge`, memory constants, and rotation finalizers), maintaining the strict "one test file per version" design pattern (`v200_test.go`, `v210_test.go`, `v230_test.go`, `v231_test.go`, `v232_test.go`).
+- **Runnable Competitor Benchmark Suite (`benchmarks/`):**
+  - Updated `benchmarks/` with runnable benchmarks measuring `zerojwt/v2` (HS256, RS256, VerifyNow, VerifyStringNow) directly against `golang-jwt/jwt/v5`, `lestrrat-go/jwx/v2`, and `kataras/jwt`.
+
+### Fixed
+- **Sentinel Error Consistency for Headers (`v2/jwt.go`, `v2/split.go`):**
+  - Activated the `ErrHeaderTooLarge` sentinel error in `verifySignatureAndDecodePayload` and `verifySplitSignatureAndDecodePayload` when decoded header size exceeds `st.hdrBuf`, replacing the ambiguous `ErrInvalidHeader` and restoring symmetry with `ErrPayloadTooLarge`.
+- **Memory Hygiene for Key Rotation under ZeroMemory (`v2/jwt.go`):**
+  - Attached a garbage collector finalizer (`runtime.SetFinalizer`) to replaced `keySet` instances when `ZeroMemory: true` is configured, guaranteeing that old rotation secrets are zeroed out once concurrent in-flight requests finish without data races.
+
+---
+
 ## [v2.3.1] - 2026-10-24
 
 ### Added

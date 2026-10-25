@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"time"
-	"unsafe"
 )
 
 type claimsContextKey struct{}
@@ -18,9 +17,8 @@ func (v *Verifier) ProtectFunc(next func(w http.ResponseWriter, r *http.Request,
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		authBytes := unsafe.Slice(unsafe.StringData(auth), len(auth))
 		var claims Claims
-		if err := v.VerifyBearer(authBytes, time.Now().Unix(), &claims); err != nil {
+		if err := v.VerifyBearerStringNow(auth, &claims); err != nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -37,9 +35,8 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		authBytes := unsafe.Slice(unsafe.StringData(auth), len(auth))
 		var claims Claims
-		if err := v.VerifyBearer(authBytes, time.Now().Unix(), &claims); err != nil {
+		if err := v.VerifyBearerStringNow(auth, &claims); err != nil {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -117,16 +114,12 @@ func (v *Verifier) ForwardAuthHandler(opts ...ForwardAuthOptions) http.HandlerFu
 
 		auth := r.Header.Get("Authorization")
 		if len(auth) > len(bearerPrefix) {
-			authBytes := unsafe.Slice(unsafe.StringData(auth), len(auth))
-			err = v.VerifyBearer(authBytes, now, &claims)
+			err = v.VerifyBearerString(auth, now, &claims)
 		} else if opt.CustomHeader != "" && r.Header.Get(opt.CustomHeader) != "" {
-			tok := r.Header.Get(opt.CustomHeader)
-			tokBytes := unsafe.Slice(unsafe.StringData(tok), len(tok))
-			err = v.Verify(tokBytes, now, &claims)
+			err = v.VerifyString(r.Header.Get(opt.CustomHeader), now, &claims)
 		} else if opt.CookieName != "" {
 			if cookie, cErr := r.Cookie(opt.CookieName); cErr == nil && len(cookie.Value) > 0 {
-				tokBytes := unsafe.Slice(unsafe.StringData(cookie.Value), len(cookie.Value))
-				err = v.Verify(tokBytes, now, &claims)
+				err = v.VerifyString(cookie.Value, now, &claims)
 			} else {
 				unauthorized()
 				return

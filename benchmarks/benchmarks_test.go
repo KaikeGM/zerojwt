@@ -1,10 +1,13 @@
 package benchmarks
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
 	"testing"
 	"time"
 
 	"github.com/KaikeGM/zerojwt"
+	zerojwtv2 "github.com/KaikeGM/zerojwt/v2"
 	golangjwt "github.com/golang-jwt/jwt/v5"
 	katarasjwt "github.com/kataras/jwt"
 	"github.com/lestrrat-go/jwx/v2/jwa"
@@ -394,5 +397,152 @@ func TestCompetitorsCompatibility(t *testing.T) {
 	}
 	if tokJwx.Subject() != "12345" {
 		t.Fatalf("jwx claims mismatch: sub=%s", tokJwx.Subject())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 7. zerojwt/v2 High-Performance Ergonomics (VerifyNow, VerifyStringNow)
+// ---------------------------------------------------------------------------
+
+func BenchmarkVerify_ZeroJWT_V2_SingleThread(b *testing.B) {
+	v, _ := zerojwtv2.New(benchmarkSecret)
+	st := v.NewScratch()
+	now := time.Now().Unix()
+	tok, _ := v.SignClaims(nil, zerojwtv2.StandardClaims{
+		Subject:   "12345",
+		Username:  "golden_ember_1",
+		ExpiresAt: now + 3600,
+	})
+	var claims zerojwtv2.Claims
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := v.VerifyWithScratch(tok, now, &claims, st); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkVerify_ZeroJWT_V2_VerifyNow(b *testing.B) {
+	v, _ := zerojwtv2.New(benchmarkSecret)
+	now := time.Now().Unix()
+	tok, _ := v.SignClaims(nil, zerojwtv2.StandardClaims{
+		Subject:   "12345",
+		Username:  "golden_ember_1",
+		ExpiresAt: now + 3600,
+	})
+	var claims zerojwtv2.Claims
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := v.VerifyNow(tok, &claims); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkVerify_ZeroJWT_V2_VerifyStringNow(b *testing.B) {
+	v, _ := zerojwtv2.New(benchmarkSecret)
+	now := time.Now().Unix()
+	tokBytes, _ := v.SignClaims(nil, zerojwtv2.StandardClaims{
+		Subject:   "12345",
+		Username:  "golden_ember_1",
+		ExpiresAt: now + 3600,
+	})
+	tokStr := string(tokBytes)
+	var claims zerojwtv2.Claims
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := v.VerifyStringNow(tokStr, &claims); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 8. RS256 Benchmarks (zerojwt/v2 vs golang-jwt/jwt/v5 vs lestrrat-go/jwx/v2)
+// ---------------------------------------------------------------------------
+
+var (
+	rsaPrivKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+	rsaPubKey     = &rsaPrivKey.PublicKey
+)
+
+func BenchmarkRS256_ZeroJWT_V2(b *testing.B) {
+	v, err := zerojwtv2.NewRS256Verifier(rsaPubKey, rsaPrivKey)
+	if err != nil {
+		b.Fatal(err)
+	}
+	now := time.Now().Unix()
+	tok, err := v.SignClaims(nil, zerojwtv2.StandardClaims{
+		Subject:   "12345",
+		Username:  "golden_ember_1",
+		ExpiresAt: now + 3600,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	var claims zerojwtv2.Claims
+	st := v.NewScratch()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := v.VerifyWithScratch(tok, now, &claims, st); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkRS256_GolangJWT(b *testing.B) {
+	token := golangjwt.NewWithClaims(golangjwt.SigningMethodRS256, standardClaims{
+		User: "golden_ember_1",
+		RegisteredClaims: golangjwt.RegisteredClaims{
+			Subject:   "12345",
+			ExpiresAt: golangjwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	tokenString, err := token.SignedString(rsaPrivKey)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		parsed, err := golangjwt.ParseWithClaims(tokenString, &standardClaims{}, func(t *golangjwt.Token) (interface{}, error) {
+			return rsaPubKey, nil
+		})
+		if err != nil || !parsed.Valid {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkRS256_JWX(b *testing.B) {
+	tokObj, err := jwxjwt.NewBuilder().
+		Subject("12345").
+		Claim("user", "golden_ember_1").
+		Expiration(time.Now().Add(time.Hour)).
+		Build()
+	if err != nil {
+		b.Fatal(err)
+	}
+	signed, err := jwxjwt.Sign(tokObj, jwxjwt.WithKey(jwa.RS256, rsaPrivKey))
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tokParsed, err := jwxjwt.Parse(signed, jwxjwt.WithKey(jwa.RS256, rsaPubKey), jwxjwt.WithValidate(true))
+		if err != nil || tokParsed == nil {
+			b.Fatal(err)
+		}
 	}
 }

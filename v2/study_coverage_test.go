@@ -163,8 +163,8 @@ func TestStudyFullCoverage(t *testing.T) {
 
 	// Header too large
 	bigHdr := bytes.Repeat([]byte("A"), 300)
-	if _, err := v.verifySplitSignatureAndDecodePayload(bigHdr, []byte(".pl.sig"), st); !errors.Is(err, ErrInvalidHeader) {
-		t.Fatalf("expected ErrInvalidHeader for huge header, got %v", err)
+	if _, err := v.verifySplitSignatureAndDecodePayload(bigHdr, []byte(".pl.sig"), st); !errors.Is(err, ErrHeaderTooLarge) {
+		t.Fatalf("expected ErrHeaderTooLarge for huge header, got %v", err)
 	}
 
 	// Invalid base64 in header
