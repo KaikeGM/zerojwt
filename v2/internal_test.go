@@ -277,6 +277,34 @@ func TestInternalHeaderValidationEdges(t *testing.T) {
 	if _, err := v.validateHeader([]byte(`{"alg":"HS256", 123}`)); !errors.Is(err, ErrInvalidHeader) {
 		t.Fatalf("expected ErrInvalidHeader for non-quote after comma, got %v", err)
 	}
+
+	// Structural JSON syntax errors inside nested array/object values
+	malformedNestedHeaders := []string{
+		`{"alg":"HS256","":[A]}`,
+		`{"alg":"HS256","":[tru]}`,
+		`{"alg":"HS256","":[1,2,]}`,
+		`{"alg":"HS256","":[1 2]}`,
+		`{"alg":"HS256","":{1:2}}`,
+		`{"alg":"HS256","":[01]}`,
+		`{"alg":"HS256","":[1.2.3]}`,
+	}
+	for _, h := range malformedNestedHeaders {
+		if _, err := v.validateHeader([]byte(h)); !errors.Is(err, ErrInvalidHeader) {
+			t.Fatalf("expected ErrInvalidHeader for malformed nested JSON %s, got %v", h, err)
+		}
+	}
+
+	// Valid nested structures must succeed
+	validNestedHeaders := []string{
+		`{"alg":"HS256","":{}}`,
+		`{"alg":"HS256","":[]}`,
+		`{"alg":"HS256","custom":[1, "two", true, null, {"k": 5}]}`,
+	}
+	for _, h := range validNestedHeaders {
+		if _, err := v.validateHeader([]byte(h)); err != nil {
+			t.Fatalf("expected nil error for valid nested JSON %s, got %v", h, err)
+		}
+	}
 }
 
 func TestInternalSignatureAndScratchEdges(t *testing.T) {

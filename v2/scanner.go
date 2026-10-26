@@ -132,12 +132,14 @@ func NextArrayElement(b []byte) (val []byte, isStr bool, rest []byte, ok bool) {
 	return val, isStr, trimJSONWS(b[nextIdx:]), true
 }
 
-func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok bool) {
+func scanJSONPrimitive(b []byte, i int) (nextIdx int, isStr bool, ok bool) {
 	n := len(b)
+	if i >= n {
+		return 0, false, false
+	}
 	if b[i] == '"' {
 		isStr = true
 		i++
-		vStart := i
 		// Unrolled 4-byte fast scan with BCE via slice windowing
 		for rem := b[i:]; len(rem) >= 4; rem = rem[4:] {
 			if escapeLut[rem[0]] || escapeLut[rem[1]] || escapeLut[rem[2]] || escapeLut[rem[3]] {
@@ -156,92 +158,35 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 			i++
 		}
 		if i >= n {
-			return nil, false, 0, false
+			return 0, false, false
 		}
-		val = b[vStart:i]
-		return val, true, i + 1, true
-	} else if b[i] == '{' || b[i] == '[' {
-		var stack [32]byte
-		sp := uint(0)
-		if b[i] == '{' {
-			stack[0] = '}'
-		} else {
-			stack[0] = ']'
-		}
-		sp++
-		vStart := i
-		i++
-		inS := false
-		for i < n && sp > 0 {
-			c := b[i]
-			if inS {
-				if c == '\\' {
-					i += 2
-					continue
-				}
-				if c == '"' {
-					inS = false
-				}
-				i++
-				continue
-			}
-			switch c {
-			case '"':
-				inS = true
-			case '{':
-				if sp >= uint(len(stack)) {
-					return nil, false, 0, false
-				}
-				stack[sp&31] = '}'
-				sp++
-			case '[':
-				if sp >= uint(len(stack)) {
-					return nil, false, 0, false
-				}
-				stack[sp&31] = ']'
-				sp++
-			case '}', ']':
-				sp--
-				if stack[sp&31] != c {
-					return nil, false, 0, false
-				}
-			}
-			i++
-		}
-		if sp != 0 {
-			return nil, false, 0, false
-		}
-		return b[vStart:i], false, i, true
+		return i + 1, true, true
 	} else if b[i] == 't' {
-		// 0x65757274 is "true" in little-endian uint32
 		if rem := b[i:]; len(rem) >= 4 && binary.LittleEndian.Uint32(rem) == 0x65757274 && (len(rem) == 4 || numEndLut[rem[4]]) {
-			return rem[:4], false, i + 4, true
+			return i + 4, false, true
 		}
-		return nil, false, 0, false
+		return 0, false, false
 	} else if b[i] == 'f' {
-		// 0x736c6166 is "fals" in little-endian uint32
 		if rem := b[i:]; len(rem) >= 5 && binary.LittleEndian.Uint32(rem) == 0x736c6166 && rem[4] == 'e' && (len(rem) == 5 || numEndLut[rem[5]]) {
-			return rem[:5], false, i + 5, true
+			return i + 5, false, true
 		}
-		return nil, false, 0, false
+		return 0, false, false
 	} else if b[i] == 'n' {
-		// 0x6c6c756e is "null" in little-endian uint32
 		if rem := b[i:]; len(rem) >= 4 && binary.LittleEndian.Uint32(rem) == 0x6c6c756e && (len(rem) == 4 || numEndLut[rem[4]]) {
-			return rem[:4], false, i + 4, true
+			return i + 4, false, true
 		}
-		return nil, false, 0, false
+		return 0, false, false
 	} else if b[i] == '-' || (b[i] >= '0' && b[i] <= '9') {
-		vStart := i
 		if b[i] == '-' {
 			i++
 			if i >= n || b[i] < '0' || b[i] > '9' {
-				return nil, false, 0, false
+				return 0, false, false
 			}
 		}
 		if b[i] == '0' {
 			i++
 			if i < n && b[i] >= '0' && b[i] <= '9' {
-				return nil, false, 0, false // leading zero forbidden
+				return 0, false, false // leading zero forbidden
 			}
 		} else {
 			for i < n && b[i] >= '0' && b[i] <= '9' {
@@ -251,7 +196,7 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 		if i < n && b[i] == '.' {
 			i++
 			if i >= n || b[i] < '0' || b[i] > '9' {
-				return nil, false, 0, false
+				return 0, false, false
 			}
 			for i < n && b[i] >= '0' && b[i] <= '9' {
 				i++
@@ -263,19 +208,159 @@ func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok boo
 				i++
 			}
 			if i >= n || b[i] < '0' || b[i] > '9' {
-				return nil, false, 0, false
+				return 0, false, false
 			}
 			for i < n && b[i] >= '0' && b[i] <= '9' {
 				i++
 			}
 		}
 		if i < n && !numEndLut[b[i]] {
-			return nil, false, 0, false
+			return 0, false, false
 		}
-		return b[vStart:i], false, i, true
+		return i, false, true
+	}
+	return 0, false, false
+}
+
+func scanJSONValue(b []byte, i int) (val []byte, isStr bool, nextIdx int, ok bool) {
+	n := len(b)
+	if i >= n {
+		return nil, false, 0, false
 	}
 
-	return nil, false, 0, false
+	if b[i] != '{' && b[i] != '[' {
+		next, strFlag, primOk := scanJSONPrimitive(b, i)
+		if !primOk {
+			return nil, false, 0, false
+		}
+		if strFlag {
+			return b[i+1 : next-1], true, next, true
+		}
+		return b[i:next], false, next, true
+	}
+
+	// Finite State Machine (FSM) for validating nested JSON objects and arrays
+	// strictly per RFC 8259 without heap allocations (0 B/op, 0 allocs/op).
+	const (
+		fsmValue        uint8 = 0
+		fsmCommaOrClose uint8 = 1
+		fsmKey          uint8 = 2
+		fsmColon        uint8 = 3
+		fsmArrayStart   uint8 = 4
+		fsmObjectStart  uint8 = 5
+	)
+
+	var stack [32]byte
+	sp := uint(0)
+	var state uint8
+
+	if b[i] == '{' {
+		stack[0] = '}'
+		state = fsmObjectStart
+	} else {
+		stack[0] = ']'
+		state = fsmArrayStart
+	}
+	sp = 1
+	vStart := i
+	i++
+
+	for i < n && sp > 0 {
+		for i < n && wsLut[b[i]] {
+			i++
+		}
+		if i >= n {
+			return nil, false, 0, false
+		}
+		c := b[i]
+
+		switch state {
+		case fsmArrayStart:
+			if c == ']' {
+				sp--
+				i++
+				state = fsmCommaOrClose
+			} else {
+				state = fsmValue
+				continue
+			}
+
+		case fsmObjectStart:
+			if c == '}' {
+				sp--
+				i++
+				state = fsmCommaOrClose
+			} else {
+				state = fsmKey
+				continue
+			}
+
+		case fsmKey:
+			if c != '"' {
+				return nil, false, 0, false
+			}
+			next, _, ok := scanJSONPrimitive(b, i)
+			if !ok {
+				return nil, false, 0, false
+			}
+			i = next
+			state = fsmColon
+
+		case fsmColon:
+			if c != ':' {
+				return nil, false, 0, false
+			}
+			i++
+			state = fsmValue
+
+		case fsmValue:
+			if c == '{' {
+				if sp >= uint(len(stack)) {
+					return nil, false, 0, false
+				}
+				stack[sp&31] = '}'
+				sp++
+				i++
+				state = fsmObjectStart
+			} else if c == '[' {
+				if sp >= uint(len(stack)) {
+					return nil, false, 0, false
+				}
+				stack[sp&31] = ']'
+				sp++
+				i++
+				state = fsmArrayStart
+			} else {
+				next, _, ok := scanJSONPrimitive(b, i)
+				if !ok {
+					return nil, false, 0, false
+				}
+				i = next
+				state = fsmCommaOrClose
+			}
+
+		case fsmCommaOrClose:
+			if c == stack[(sp-1)&31] {
+				sp--
+				i++
+				state = fsmCommaOrClose
+			} else if c == ',' {
+				i++
+				if stack[(sp-1)&31] == ']' {
+					state = fsmValue
+				} else {
+					state = fsmKey
+				}
+			} else {
+				return nil, false, 0, false
+			}
+		}
+	}
+
+	if sp != 0 {
+		return nil, false, 0, false
+	}
+	return b[vStart:i], false, i, true
 }
 
 func trimJSONWS(b []byte) []byte {
