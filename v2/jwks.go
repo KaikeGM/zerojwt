@@ -44,10 +44,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 	var res []Key
 	seenKids := make(map[string]struct{})
 	for len(arrBody) > 0 {
-		elem, _, rest, ok := NextArrayElement(arrBody)
-		if !ok {
-			return nil, ErrInvalidJWKS
-		}
+		elem, _, rest, _ := NextArrayElement(arrBody)
 		arrBody = rest
 		elemObj, ok := TrimJSONObject(elem)
 		if !ok {
@@ -59,10 +56,7 @@ func ParseJWKS(jwks []byte) ([]Key, error) {
 			hasUse, hasKeyOps                              bool
 		)
 		for len(elemObj) > 0 {
-			propKey, propVal, isStr, restProp, ok := NextJSONProp(elemObj)
-			if !ok {
-				return nil, ErrInvalidJWKS
-			}
+			propKey, propVal, isStr, restProp, _ := NextJSONProp(elemObj)
 			elemObj = trimJSONWS(restProp)
 			if string(propKey) == "key_ops" {
 				if isStr {

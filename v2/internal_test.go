@@ -430,3 +430,38 @@ func TestInternalUTF8RuneEncoding(t *testing.T) {
 		t.Fatalf("expected 4-byte UTF-8, got %d", n)
 	}
 }
+
+func TestInternalScannerFSMFullCoverage(t *testing.T) {
+	// 1. scanJSONPrimitive and scanJSONValue on empty slice (i >= n)
+	if _, _, ok := scanJSONPrimitive([]byte(""), 0); ok {
+		t.Fatal("expected false for scanJSONPrimitive on empty slice")
+	}
+	if _, _, _, ok := scanJSONValue([]byte(""), 0); ok {
+		t.Fatal("expected false for scanJSONValue on empty slice")
+	}
+
+	// 2. Trailing whitespace without closing bracket (i >= n in FSM loop)
+	if _, _, _, _, ok := NextJSONProp([]byte(`"key": {"a": 1,   `)); ok {
+		t.Fatal("expected false for trailing whitespace in unclosed object")
+	}
+
+	// 3. Unclosed string key in fsmKey (scanJSONPrimitive returns !ok)
+	if _, _, _, _, ok := NextJSONProp([]byte(`"key": {"unclosed`)); ok {
+		t.Fatal("expected false for unclosed string key in object")
+	}
+
+	// 4. Missing colon after key in fsmColon
+	if _, _, _, _, ok := NextJSONProp([]byte(`"key": {"k" "v"}`)); ok {
+		t.Fatal("expected false for missing colon after key in object")
+	}
+
+	// 5. Stack depth limit (>32 nesting depth)
+	deepArray := bytes.Repeat([]byte("["), 33)
+	if _, _, _, _, ok := NextJSONProp(append([]byte(`"key": `), deepArray...)); ok {
+		t.Fatal("expected false for deeply nested array")
+	}
+	deepObj := bytes.Repeat([]byte(`{"a": `), 33)
+	if _, _, _, _, ok := NextJSONProp(append([]byte(`"key": `), deepObj...)); ok {
+		t.Fatal("expected false for deeply nested object")
+	}
+}
