@@ -843,14 +843,16 @@ func (v *Verifier) UpdateKeys(keys []Key) error {
 		keyVersion: newVer,
 	}
 	if v.zeroMemory {
-		runtime.SetFinalizer(newKS, func(ks *keySet) {
-			for i := range ks.keys {
-				memclr(ks.keys[i].secret)
-			}
-		})
+		runtime.SetFinalizer(newKS, finalizeKeySet)
 	}
 	v.keySetPtr.Store(newKS)
 	return nil
+}
+
+func finalizeKeySet(ks *keySet) {
+	for i := range ks.keys {
+		memclr(ks.keys[i].secret)
+	}
 }
 
 // CanSign reports whether this Verifier holds key material needed to issue tokens.

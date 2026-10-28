@@ -465,3 +465,18 @@ func TestInternalScannerFSMFullCoverage(t *testing.T) {
 		t.Fatal("expected false for deeply nested object")
 	}
 }
+
+func TestInternalKeySetFinalizer(t *testing.T) {
+	sec := []byte("secret-to-be-cleared-by-finalizeKeySet-123")
+	ks := &keySet{
+		keys: []compiledKey{
+			{secret: sec},
+		},
+	}
+	finalizeKeySet(ks)
+	for _, b := range sec {
+		if b != 0 {
+			t.Fatalf("expected byte to be zeroed, got %d", b)
+		}
+	}
+}

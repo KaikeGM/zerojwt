@@ -171,8 +171,9 @@ func TestV232_UpdateKeys_ZeroMemoryAndFinalizer(t *testing.T) {
 	}
 
 	// Force GC to exercise runtime.SetFinalizer on the dropped keySet
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		runtime.GC()
+		runtime.Gosched()
 		time.Sleep(10 * time.Millisecond)
 	}
 
