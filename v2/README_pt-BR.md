@@ -7,6 +7,7 @@ Assinatura, verificação e streaming de propriedades JSON de JWT de ultra-alta 
 [![Go Reference](https://pkg.go.dev/badge/github.com/KaikeGM/zerojwt/v2.svg)](https://pkg.go.dev/github.com/KaikeGM/zerojwt/v2)
 [![Coverage: 100%](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](#)
 [![Allocations: 0](https://img.shields.io/badge/allocations-0_allocs%2Fop-blue.svg)](#)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/KaikeGM/badge.svg)](https://hub.xerj.org/contributors/KaikeGM)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 
 ---

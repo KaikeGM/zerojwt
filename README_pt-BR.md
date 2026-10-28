@@ -6,6 +6,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/KaikeGM/zerojwt)](https://goreportcard.com/report/github.com/KaikeGM/zerojwt)
 [![Coverage](https://img.shields.io/badge/coverage-100.0%25-brightgreen.svg)](https://github.com/KaikeGM/zerojwt)
 [![Allocations](https://img.shields.io/badge/allocations-0_B%2Fop-blue.svg)](https://github.com/KaikeGM/zerojwt)
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/KaikeGM/badge.svg)](https://hub.xerj.org/contributors/KaikeGM)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 `zerojwt` é uma biblioteca pura em Go, com **zero dependências externas**, projetada para assinar e verificar **JSON Web Tokens (JWT / RFC 7519)** em **~215 ns/op (paralelo) / ~415–700 ns/op (single-core)** com garantia estrita de **`0 B/op` e `0 allocs/op`** nos caminhos críticos de execução.
