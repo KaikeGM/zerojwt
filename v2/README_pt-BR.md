@@ -650,8 +650,8 @@ http:
 
 1. **Zeragem de Memória com `Destroy()`**:  
    Chamar `v.Destroy()` invalida o verificador e sobrescreve chaves privadas e segredos HMAC com `0x00`. Chamadas subsequentes falham em modo fechado com `ErrVerifierDestroyed`.
-2. **Parser Estrito de Cabeçalho no Nível Superior (RFC 8259)**:  
-   Verificações pré-autenticação validam separadores, números e estrutura (rejeitando cabeçalhos malformados, vírgulas duplicadas/finais como `,,`, números inválidos e colchetes incompatíveis) antes de executar operações criptográficas. Nota: não valida o conteúdo interno das strings (ex.: caracteres de controle crus ou sequências de escape inválidas).
+2. **Parser Estrito de Cabeçalho e Lexer (RFC 8259)**:  
+   Verificações pré-autenticação validam separadores, números, estrutura de colchetes/chaves e literais de string (rejeitando estritamente caracteres de controle não escapados `< 0x20`, sequências de escape inválidas e sequências `\uXXXX` incompletas conforme RFC 8259 §7) antes de executar operações criptográficas, verificado via fuzzing diferencial contra `encoding/json`.
 3. **Exigência Obrigatória de Expiração**:  
    Por padrão, tokens sem `exp` são rejeitados (`ErrMissingExp`), em conformidade com OIDC Core 1.0 §3.1.3.7 e RFC 9068 §2.2.
 4. **Validação de Tamanho Mínimo de Chave**:  

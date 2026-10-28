@@ -73,23 +73,12 @@ func NextJSONProp(b []byte) (key, val []byte, isStr bool, rest []byte, ok bool) 
 	if b[i] != '"' {
 		return nil, nil, false, nil, false
 	}
-	i++
-	kStart := i
-	for i < n {
-		if b[i] == '\\' {
-			i += 2
-			continue
-		}
-		if b[i] == '"' {
-			break
-		}
-		i++
-	}
-	if i >= n {
+	next, _, primOk := scanJSONPrimitive(b, i)
+	if !primOk {
 		return nil, nil, false, nil, false
 	}
-	key = b[kStart:i]
-	i++ // skip closing quote
+	key = b[i+1 : next-1]
+	i = next
 
 	// Expect ':'
 	for i < n && wsLut[b[i]] {
@@ -148,19 +137,40 @@ func scanJSONPrimitive(b []byte, i int) (nextIdx int, isStr bool, ok bool) {
 			i += 4
 		}
 		for i < n {
-			if b[i] == '\\' {
-				i += 2
-				continue
+			c := b[i]
+			if c == '"' {
+				return i + 1, true, true
 			}
-			if b[i] == '"' {
-				break
+			if c < 0x20 {
+				return 0, false, false // RFC 8259 §7: unescaped control characters forbidden
+			}
+			if c == '\\' {
+				if i+1 >= n {
+					return 0, false, false
+				}
+				switch b[i+1] {
+				case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+					i += 2
+				case 'u':
+					if i+5 >= n || hexLut[b[i+2]] == 0xFF || hexLut[b[i+3]] == 0xFF || hexLut[b[i+4]] == 0xFF || hexLut[b[i+5]] == 0xFF {
+						return 0, false, false
+					}
+					i += 6
+				default:
+					return 0, false, false // RFC 8259 §7: invalid escape sequence
+				}
+				// Resume unrolled 4-byte fast scan for remaining plain ASCII chunk
+				for rem := b[i:]; len(rem) >= 4; rem = rem[4:] {
+					if escapeLut[rem[0]] || escapeLut[rem[1]] || escapeLut[rem[2]] || escapeLut[rem[3]] {
+						break
+					}
+					i += 4
+				}
+				continue
 			}
 			i++
 		}
-		if i >= n {
-			return 0, false, false
-		}
-		return i + 1, true, true
+		return 0, false, false
 	} else if b[i] == 't' {
 		if rem := b[i:]; len(rem) >= 4 && binary.LittleEndian.Uint32(rem) == 0x65757274 && (len(rem) == 4 || numEndLut[rem[4]]) {
 			return i + 4, false, true

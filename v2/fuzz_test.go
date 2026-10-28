@@ -2,16 +2,12 @@ package zerojwt
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
 // FuzzHeaderValidation tests that any JWT header accepted by zerojwt's
-// pre-authentication parser is structurally valid RFC 8259 JSON according to encoding/json.
-//
-// Note: As documented in the README and security policy, zerojwt validates separators,
-// numbers, and bracket/quote structure, but does not validate inner string content (e.g.
-// raw control characters or invalid escapes like \q inside string literals).
+// pre-authentication parser is strictly valid RFC 8259 JSON according to encoding/json,
+// including all string literal escapes, unicode sequences, and control character boundaries.
 func FuzzHeaderValidation(f *testing.F) {
 	v, err := New([]byte("01234567890123456789012345678901"))
 	if err != nil {
@@ -32,11 +28,6 @@ func FuzzHeaderValidation(f *testing.F) {
 		if err == nil {
 			var m map[string]any
 			if jsonErr := json.Unmarshal(data, &m); jsonErr != nil {
-				errMsg := jsonErr.Error()
-				// Documented exemption: zerojwt does not validate internal string byte contents (escapes / control chars)
-				if strings.Contains(errMsg, "in string") || strings.Contains(errMsg, "in string escape") {
-					return
-				}
 				t.Fatalf("Header accepted by zerojwt has structural JSON error according to encoding/json: %q (jsonErr: %v)", data, jsonErr)
 			}
 		}
@@ -52,6 +43,11 @@ func FuzzScannerDifferential(f *testing.F) {
 	f.Add([]byte(`[1, 2, 3]`))
 	f.Add([]byte(`{"broken": [1, 2`))
 	f.Add([]byte(`{"escaped": "hello\\nworld"}`))
+	f.Add([]byte(`"plain_string"`))
+	f.Add([]byte(`"escaped \"quotes\" and \t\n\r"`))
+	f.Add([]byte(`"unicode \u0020 and \u1234"`))
+	f.Add([]byte(`"invalid \q escape"`))
+	f.Add([]byte{'"', 'c', 't', 'r', 'l', 0x01, '"'})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// 1. Stress TrimJSONObject and NextJSONProp
@@ -87,6 +83,17 @@ func FuzzScannerDifferential(f *testing.F) {
 				t.Fatalf("TrimJSONObject rejected valid stdlib object: %q", data)
 			}
 			_ = trimmed
+		}
+
+		// 4. Differential string check against json.Valid:
+		// Any standalone quoted string scanned by scanJSONPrimitive must strictly agree with json.Valid(data).
+		if len(data) >= 2 && data[0] == '"' && data[len(data)-1] == '"' {
+			stdValid := json.Valid(data)
+			nextIdx, isStr, ok := scanJSONPrimitive(data, 0)
+			zeroValid := ok && isStr && nextIdx == len(data)
+			if zeroValid != stdValid {
+				t.Fatalf("scanJSONPrimitive differential mismatch for %q: zerojwt=%v stdlib=%v", data, zeroValid, stdValid)
+			}
 		}
 	})
 }

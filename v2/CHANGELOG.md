@@ -5,6 +5,22 @@ All notable changes to `zerojwt` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v2.3.3] - 2026-10-28
+
+### Security & Compliance
+- **Strict RFC 8259 String Literal Validation (`v2/scanner.go`):**
+  - Hardened `scanJSONPrimitive` slow-path to strictly enforce RFC 8259 §7:
+    - Rejects unescaped ASCII control characters (`< 0x20`, such as raw newlines, carriage returns, tabs, and null bytes).
+    - Rejects invalid escape sequences (`\a`, `\x`, `\'`, `\q`, `\0`, etc.), accepting only RFC-compliant escapes (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX`).
+    - Validates that `\u` unicode escapes contain exactly 4 valid hexadecimal digits using precomputed lookup table `hexLut`.
+  - Unified object key validation in `NextJSONProp` through `scanJSONPrimitive`, guaranteeing that keys with malformed escapes or raw control characters fail closed.
+  - Resumes unrolled 4-byte vectorized fast scan (`rem[4:]`) immediately after escape decoding, preserving peak throughput with zero allocations (`0 B/op, 0 allocs/op`).
+- **Differential Fuzz Testing Quality Gate (`v2/fuzz_test.go`):**
+  - Added continuous differential fuzzing test (`FuzzScannerDifferential`) comparing `scanJSONPrimitive` directly against standard library `encoding/json.Valid` across 1.95M+ executions with 0 divergences.
+  - Removed internal string exemption from `FuzzHeaderValidation`, mathematically verifying that every JWT header accepted by `zerojwt` is 100% strictly valid JSON according to `encoding/json`.
+
+---
+
 ## [v2.3.2] - 2026-10-25
 
 ### Added

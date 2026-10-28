@@ -650,8 +650,8 @@ http:
 
 1. **`Destroy()` Memory Zeroing**:  
    Calling `v.Destroy()` marks the verifier as destroyed and zeroes out private keys and HMAC secrets with `0x00`. Subsequent calls fail closed with `ErrVerifierDestroyed`.
-2. **Strict RFC 8259 Top-Level Header Parsing**:  
-   Pre-authentication checks validate separators, numbers, and JSON structure (rejecting malformed headers, duplicate/trailing commas like `,,`, invalid numbers, and mismatched brackets) before running cryptographic operations. Note: it does not validate inner string content (e.g. raw control characters or invalid string escape sequences).
+2. **Strict RFC 8259 Top-Level Header & Lexer Parsing**:  
+   Pre-authentication checks validate separators, numbers, bracket structure, and string literals (strictly rejecting unescaped control characters `< 0x20`, invalid escape sequences, and incomplete `\uXXXX` sequences per RFC 8259 §7) before running cryptographic operations, verified via differential fuzzing against `encoding/json`.
 3. **Mandatory Expiration Enforcement**:  
    By default, tokens missing `exp` are rejected (`ErrMissingExp`), complying with OIDC Core 1.0 §3.1.3.7 and RFC 9068 §2.2.
 4. **Secret Length Enforcement**:  

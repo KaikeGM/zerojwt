@@ -480,3 +480,66 @@ func TestInternalKeySetFinalizer(t *testing.T) {
 		}
 	}
 }
+
+func TestInternalScanJSONPrimitive_RFC8259(t *testing.T) {
+	// 1. Control character rejection (< 0x20)
+	for c := byte(0); c < 0x20; c++ {
+		raw := []byte{'"', 'a', c, 'b', '"'}
+		if _, _, ok := scanJSONPrimitive(raw, 0); ok {
+			t.Fatalf("expected false for unescaped control character 0x%02x", c)
+		}
+	}
+
+	// 2. Trailing backslash / incomplete escape
+	if _, _, ok := scanJSONPrimitive([]byte(`"hello\`), 0); ok {
+		t.Fatal("expected false for trailing backslash at end of slice")
+	}
+
+	// 3. Invalid escape characters
+	badEscapes := []string{`"\a"`, `"\x"`, `"\x00"`, `"\'"`, `"\v"`, `"\0"`, `"\q"`, `"\1"`}
+	for _, bad := range badEscapes {
+		if _, _, ok := scanJSONPrimitive([]byte(bad), 0); ok {
+			t.Fatalf("expected false for invalid escape sequence %s", bad)
+		}
+	}
+
+	// 4. Incomplete or invalid \u sequences
+	badUnicode := []string{
+		`"\u"`,
+		`"\u1"`,
+		`"\u12"`,
+		`"\u123"`,
+		`"\u123z"`,
+		`"\uZZZZ"`,
+		`"\u12+3"`,
+		`"\u12-3"`,
+	}
+	for _, bad := range badUnicode {
+		if _, _, ok := scanJSONPrimitive([]byte(bad), 0); ok {
+			t.Fatalf("expected false for invalid unicode sequence %s", bad)
+		}
+	}
+
+	// 5. Valid escapes
+	validEscapes := []string{
+		`"\""`,
+		`"\\"` ,
+		`"\/"`,
+		`"\b"`,
+		`"\f"`,
+		`"\n"`,
+		`"\r"`,
+		`"\t"`,
+		`"\u0020"`,
+		`"\uABCD"`,
+		`"\u1234"`,
+		`"prefix\nescaped long string containing ascii characters and more text"`,
+	}
+	for _, valid := range validEscapes {
+		next, isStr, ok := scanJSONPrimitive([]byte(valid), 0)
+		if !ok || !isStr || next != len(valid) {
+			t.Fatalf("expected valid string for %s, got ok=%v isStr=%v next=%d (len=%d)", valid, ok, isStr, next, len(valid))
+		}
+	}
+}
+
