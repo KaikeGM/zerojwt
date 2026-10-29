@@ -123,6 +123,16 @@ func TestV230_SignAndVerify_RS256(t *testing.T) {
 		t.Fatalf("expected ErrInvalidSignature in split, got %v", err)
 	}
 
+	// Valid base64 signature of correct length (256 bytes) that fails PKCS1v15 cryptographic verification
+	fakeSig := rawURLStrict.EncodeToString(make([]byte, 256))
+	badSigTok := append(append([]byte(nil), tok[:dot2+1]...), []byte(fakeSig)...)
+	if err := v2048.Verify(badSigTok, now, &cl); !errors.Is(err, ErrInvalidSignature) {
+		t.Fatalf("expected ErrInvalidSignature for fake RS256 sig, got %v", err)
+	}
+	if err := v2048.VerifySplit(badSigTok[:splitIdx2], badSigTok[splitIdx2:], now, &cl); !errors.Is(err, ErrInvalidSignature) {
+		t.Fatalf("expected ErrInvalidSignature for fake RS256 sig in split, got %v", err)
+	}
+
 	// SignClaims
 	claimsTok, err := v2048.SignClaims(nil, StandardClaims{
 		Subject:   "bob",
