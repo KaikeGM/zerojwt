@@ -523,7 +523,7 @@ func TestInternalScanJSONPrimitive_RFC8259(t *testing.T) {
 	// 5. Valid escapes
 	validEscapes := []string{
 		`"\""`,
-		`"\\"` ,
+		`"\\"`,
 		`"\/"`,
 		`"\b"`,
 		`"\f"`,
@@ -542,4 +542,3 @@ func TestInternalScanJSONPrimitive_RFC8259(t *testing.T) {
 		}
 	}
 }
-
